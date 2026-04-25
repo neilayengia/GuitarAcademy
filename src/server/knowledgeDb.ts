@@ -1,112 +1,87 @@
 /**
- * knowledgeDb.ts — SQLite-backed vector store for RAG knowledge chunks.
+ * knowledgeDb.ts — Supabase/pgvector backed vector store for RAG knowledge chunks.
  *
  * Stores text chunks alongside their embedding vectors (from Gemini).
  * Supports cosine-similarity search for retrieval at query time.
  */
 
-import Database from 'better-sqlite3';
-import path from 'path';
+import { createClient } from '@supabase/supabase-js';
 
-const DB_PATH = path.resolve(process.cwd(), 'knowledge.db');
+// Setup Supabase Client for Server-Side Use
+// Uses Vercel's standard process.env inside API functions
+const getSupabase = () => {
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    // For admin tasks (like ingestion) we use SERVICE_ROLE_KEY; for queries ANON_KEY is fine if RLS allows
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
-let db: Database.Database | null = null;
-
-// ── Database Lifecycle ───────────────────────────────────────────────────────
-
-export function getDb(): Database.Database {
-    if (!db) {
-        db = new Database(DB_PATH);
-        db.pragma('journal_mode = WAL');
-        initDb(db);
+    if (!supabaseUrl || !supabaseKey) {
+        throw new Error('Supabase URL or Key is missing from environment variables');
     }
-    return db;
-}
 
-function initDb(database: Database.Database): void {
-    database.exec(`
-        CREATE TABLE IF NOT EXISTS chunks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source TEXT NOT NULL,
-            chunk_index INTEGER NOT NULL,
-            text TEXT NOT NULL,
-            embedding BLOB NOT NULL,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source);
-    `);
-}
+    return createClient(supabaseUrl, supabaseKey);
+};
 
 // ── Storage ──────────────────────────────────────────────────────────────────
 
 export interface ChunkRecord {
-    id: number;
+    id: string;
     source: string;
-    chunkIndex: number;
-    text: string;
-    embedding: Float32Array;
+    text_content: string;
+    embedding: number[];
 }
 
 /**
  * Store a text chunk with its embedding vector.
  */
-export function storeChunk(
+export async function storeChunk(
     text: string,
     embedding: number[],
-    source: string,
-    chunkIndex: number
-): void {
-    const database = getDb();
-    const embeddingBlob = Buffer.from(new Float32Array(embedding).buffer);
+    source: string
+): Promise<void> {
+    const supabase = getSupabase();
+    
+    // Convert float array to JSON array string format for pgvector
+    const formattedEmbedding = `[${embedding.join(',')}]`;
 
-    database.prepare(`
-        INSERT INTO chunks (source, chunk_index, text, embedding)
-        VALUES (?, ?, ?, ?)
-    `).run(source, chunkIndex, text, embeddingBlob);
+    const { error } = await supabase.from('knowledge_chunks').insert({
+        source: source,
+        text_content: text,
+        embedding: formattedEmbedding,
+    });
+
+    if (error) {
+        throw new Error(`Error storing chunk: ${error.message}`);
+    }
 }
 
 /**
  * Store multiple chunks in a single transaction (much faster for bulk ingestion).
  */
-export function storeChunksBatch(
-    chunks: { text: string; embedding: number[]; source: string; chunkIndex: number }[]
-): void {
-    const database = getDb();
-    const insert = database.prepare(`
-        INSERT INTO chunks (source, chunk_index, text, embedding)
-        VALUES (?, ?, ?, ?)
-    `);
+export async function storeChunksBatch(
+    chunks: { text: string; embedding: number[]; source: string }[]
+): Promise<void> {
+    const supabase = getSupabase();
 
-    const tx = database.transaction(() => {
-        for (const chunk of chunks) {
-            const embeddingBlob = Buffer.from(new Float32Array(chunk.embedding).buffer);
-            insert.run(chunk.source, chunk.chunkIndex, chunk.text, embeddingBlob);
-        }
-    });
+    // Map into the format expected by the DB
+    const rows = chunks.map(chunk => ({
+        source: chunk.source,
+        text_content: chunk.text,
+        embedding: `[${chunk.embedding.join(',')}]`,
+    }));
 
-    tx();
+    // Perform bulk insert
+    const { error } = await supabase.from('knowledge_chunks').insert(rows);
+
+    if (error) {
+        throw new Error(`Error string batch chunks: ${error.message}`);
+    }
 }
 
 // ── Retrieval ────────────────────────────────────────────────────────────────
 
-/**
- * Cosine similarity between two Float32Arrays.
- */
-function cosineSimilarity(a: Float32Array, b: Float32Array): number {
-    let dot = 0, normA = 0, normB = 0;
-    for (let i = 0; i < a.length; i++) {
-        dot += a[i] * b[i];
-        normA += a[i] * a[i];
-        normB += b[i] * b[i];
-    }
-    const denom = Math.sqrt(normA) * Math.sqrt(normB);
-    return denom === 0 ? 0 : dot / denom;
-}
-
 export interface QueryResult {
     text: string;
     source: string;
-    chunkIndex: number;
     similarity: number;
 }
 
@@ -114,30 +89,26 @@ export interface QueryResult {
  * Query the knowledge base using cosine similarity.
  * Returns the top-K most relevant chunks for a given query embedding.
  */
-export function queryChunks(queryEmbedding: number[], topK = 5): QueryResult[] {
-    const database = getDb();
-    const queryVec = new Float32Array(queryEmbedding);
+export async function queryChunks(queryEmbedding: number[], topK = 5): Promise<QueryResult[]> {
+    const supabase = getSupabase();
+    
+    const formattedQuery = `[${queryEmbedding.join(',')}]`;
 
-    const rows = database.prepare(`
-        SELECT id, source, chunk_index, text, embedding FROM chunks
-    `).all() as { id: number; source: string; chunk_index: number; text: string; embedding: Buffer }[];
-
-    const scored = rows.map(row => {
-        const storedVec = new Float32Array(
-            row.embedding.buffer,
-            row.embedding.byteOffset,
-            row.embedding.byteLength / 4
-        );
-        return {
-            text: row.text,
-            source: row.source,
-            chunkIndex: row.chunk_index,
-            similarity: cosineSimilarity(queryVec, storedVec),
-        };
+    const { data, error } = await supabase.rpc('match_knowledge_chunks', {
+        query_embedding: formattedQuery,
+        match_threshold: 0.5, // Return matches with similarity > 0.5
+        match_count: topK,
     });
 
-    scored.sort((a, b) => b.similarity - a.similarity);
-    return scored.slice(0, topK);
+    if (error) {
+        throw new Error(`Error querying chunks: ${error.message}`);
+    }
+
+    return (data || []).map((row: any) => ({
+        text: row.text_content,
+        source: row.source,
+        similarity: row.similarity,
+    }));
 }
 
 // ── Management ───────────────────────────────────────────────────────────────
@@ -145,20 +116,49 @@ export function queryChunks(queryEmbedding: number[], topK = 5): QueryResult[] {
 /**
  * Remove all chunks for a given source file (useful for re-ingestion).
  */
-export function clearSource(source: string): void {
-    const database = getDb();
-    database.prepare('DELETE FROM chunks WHERE source = ?').run(source);
+export async function clearSource(source: string): Promise<void> {
+    const supabase = getSupabase();
+    const { error } = await supabase.from('knowledge_chunks').delete().eq('source', source);
+    
+    if (error) {
+        throw new Error(`Error clearing source: ${error.message}`);
+    }
 }
 
 /**
  * Get a summary of what's been ingested.
  */
-export function getStatus(): { totalChunks: number; sources: { name: string; chunks: number }[] } {
-    const database = getDb();
-    const total = (database.prepare('SELECT COUNT(*) as count FROM chunks').get() as any).count;
-    const sources = database.prepare(
-        'SELECT source as name, COUNT(*) as chunks FROM chunks GROUP BY source ORDER BY source'
-    ).all() as { name: string; chunks: number }[];
+export async function getStatus(): Promise<{ totalChunks: number; sources: { name: string; chunks: number }[] }> {
+    const supabase = getSupabase();
+    
+    const { count, error: countErr } = await supabase
+        .from('knowledge_chunks')
+        .select('*', { count: 'exact', head: true });
 
-    return { totalChunks: total, sources };
+    if (countErr) {
+         throw new Error(`Error getting status count: ${countErr.message}`);
+    }
+
+    // Since Supabase doesn't natively expose "GROUP BY" through the select API easily without RPC,
+    // we'll fetch distinct sources. To keep it simple, we use a basic count query if data is small,
+    // or you could add another RPC. Let's just create a quick aggregate if possible, or fetch all sources.
+    const { data: sourcesData, error: sourcesErr } = await supabase
+        .from('knowledge_chunks')
+        .select('source');
+
+    if (sourcesErr) {
+        throw new Error(`Error getting status sources: ${sourcesErr.message}`);
+    }
+
+    const sourceCounts = (sourcesData || []).reduce((acc: any, curr: any) => {
+        acc[curr.source] = (acc[curr.source] || 0) + 1;
+        return acc;
+    }, {});
+
+    const sources = Object.entries(sourceCounts).map(([name, chunks]) => ({
+        name,
+        chunks: chunks as number,
+    }));
+
+    return { totalChunks: count || 0, sources };
 }

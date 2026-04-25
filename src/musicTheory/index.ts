@@ -12,6 +12,7 @@ export {
     parseNoteString, noteToMidi, midiToNote, midiToFrequency,
     frequencyToMidi, frequencyToNote, createNote, createNoteFromMidi,
     semitoneDist, transpose, getOpenStringMidi, prefersFlats,
+    spellNote, intervalLabelToDegreeOffset,
     type NoteName, type Accidental, type Note,
 } from './notes';
 

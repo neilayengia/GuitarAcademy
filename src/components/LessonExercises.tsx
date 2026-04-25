@@ -603,8 +603,257 @@ export function VoicingBrowser({ requiredQualities = 3, onProgress }: VoicingBro
                 </>
             ) : (
                 <p className="text-sm text-[var(--color-text-muted)] text-center py-8">
-                    No Drop-2 voicings found for {root}{quality} on strings {stringSet.split('').join('-')}. Try a different string set.
+    No Drop-2 voicings found for {root}{quality} on strings {stringSet.split('').join('-')}. Try a different string set.
                 </p>
+            )}
+        </div>
+    );
+}
+
+// ── Voice Leading Explorer Exercise ──────────────────────────────────────────
+
+interface VoiceLeadingExplorerProps {
+    mode?: 'guide_tones' | 'path_comparison' | 'custom';
+    requiredProgressions?: number;
+    onProgress?: (progressionsExplored: number) => void;
+}
+
+const VL_PRESETS: { name: string; chords: string[] }[] = [
+    { name: 'ii-V-I Major', chords: ['Dm7', 'G7', 'Cmaj7'] },
+    { name: 'ii-V-I Minor', chords: ['Dm7b5', 'G7', 'Cm7'] },
+    { name: 'I-vi-ii-V', chords: ['Cmaj7', 'Am7', 'Dm7', 'G7'] },
+    { name: 'Descending ii-V', chords: ['Cm7', 'F7', 'Bbmaj7', 'Bbm7', 'Eb7', 'Abmaj7'] },
+    { name: 'Turnaround', chords: ['Cmaj7', 'A7', 'Dm7', 'Db7'] },
+];
+
+export function VoiceLeadingExplorer({ mode = 'guide_tones', requiredProgressions = 3, onProgress }: VoiceLeadingExplorerProps) {
+    const [selectedPreset, setSelectedPreset] = useState(0);
+    const [customInput, setCustomInput] = useState('');
+    const [useCustom, setUseCustom] = useState(false);
+    const [progressionsExplored, setProgressionsExplored] = useState<Set<number>>(new Set());
+    const [activeChordIdx, setActiveChordIdx] = useState<number | null>(null);
+
+    const chordSymbols = useMemo(() => {
+        if (useCustom && customInput.trim()) {
+            return customInput.trim().split(/[\s,]+/).filter(Boolean);
+        }
+        return VL_PRESETS[selectedPreset]?.chords || [];
+    }, [useCustom, customInput, selectedPreset]);
+
+    const guideTones = useMemo(() => {
+        try {
+            return getGuidetoneLine(chordSymbols);
+        } catch {
+            return [];
+        }
+    }, [chordSymbols]);
+
+    const voiceLeadingPath = useMemo(() => {
+        try {
+            return getVoiceLeadingPath(chordSymbols);
+        } catch {
+            return null;
+        }
+    }, [chordSymbols]);
+
+    const handlePresetSelect = useCallback((idx: number) => {
+        setSelectedPreset(idx);
+        setUseCustom(false);
+        setActiveChordIdx(null);
+        setProgressionsExplored(prev => {
+            const next = new Set(prev).add(idx);
+            onProgress?.(next.size);
+            return next;
+        });
+    }, [onProgress]);
+
+    const handleCustomSubmit = useCallback(() => {
+        if (customInput.trim()) {
+            setUseCustom(true);
+            setActiveChordIdx(null);
+            setProgressionsExplored(prev => {
+                const next = new Set(prev).add(99); // custom flag
+                onProgress?.(next.size);
+                return next;
+            });
+        }
+    }, [customInput, onProgress]);
+
+    const handleChordClick = useCallback((idx: number) => {
+        setActiveChordIdx(idx);
+        // Play the chord
+        if (voiceLeadingPath?.steps[idx]) {
+            const positions = voiceLeadingPath.steps[idx].positions;
+            if (positions.length > 0) {
+                const midiNotes = positions.map(p => noteToMidi(p.note, p.octave ?? 4));
+                playChord(midiNotes);
+            }
+        }
+    }, [voiceLeadingPath]);
+
+    const playAll = useCallback(() => {
+        if (!voiceLeadingPath) return;
+        voiceLeadingPath.steps.forEach((step, idx) => {
+            setTimeout(() => {
+                setActiveChordIdx(idx);
+                const midiNotes = step.positions.map(p => noteToMidi(p.note, p.octave ?? 4));
+                playChord(midiNotes);
+            }, idx * 1400);
+        });
+        setTimeout(() => setActiveChordIdx(null), voiceLeadingPath.steps.length * 1400 + 600);
+    }, [voiceLeadingPath]);
+
+    return (
+        <div className="space-y-5">
+            {/* Controls */}
+            <div className="flex flex-wrap items-center gap-3">
+                {VL_PRESETS.map((p, i) => (
+                    <button
+                        key={p.name}
+                        onClick={() => handlePresetSelect(i)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                            !useCustom && selectedPreset === i
+                                ? 'bg-[var(--color-accent)]/15 border-[var(--color-accent)]/40 text-[var(--color-accent)]'
+                                : 'bg-[var(--color-card)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-accent)]/30'
+                        }`}
+                    >
+                        {p.name}
+                    </button>
+                ))}
+                <span className="ml-auto font-mono text-xs text-[var(--color-accent)]">
+                    {progressionsExplored.size} / {requiredProgressions} explored
+                </span>
+            </div>
+
+            {/* Custom input (always visible in custom mode, toggle in others) */}
+            {mode === 'custom' && (
+                <div className="flex items-center gap-2">
+                    <input
+                        type="text"
+                        value={customInput}
+                        onChange={e => setCustomInput(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleCustomSubmit()}
+                        placeholder="Enter chords: Dm7 G7 Cmaj7"
+                        className="flex-1 bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+                    />
+                    <button onClick={handleCustomSubmit} className={btnPrimary}>
+                        Analyze
+                    </button>
+                </div>
+            )}
+
+            {/* Chord progression display */}
+            {chordSymbols.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                    {chordSymbols.map((chord, idx) => (
+                        <React.Fragment key={idx}>
+                            <button
+                                onClick={() => handleChordClick(idx)}
+                                className={`flex flex-col items-center gap-1 px-4 py-3 rounded-xl border transition-all duration-300 ${
+                                    activeChordIdx === idx
+                                        ? 'bg-[var(--color-accent)]/15 border-[var(--color-accent)]/50 scale-105'
+                                        : 'bg-[var(--color-card)] border-[var(--color-border)] hover:border-[var(--color-accent)]/30'
+                                }`}
+                            >
+                                <span className="text-lg font-bold">{chord}</span>
+                            </button>
+                            {idx < chordSymbols.length - 1 && (
+                                <ChevronRight size={14} className="text-[var(--color-text-muted)] flex-shrink-0" />
+                            )}
+                        </React.Fragment>
+                    ))}
+                    <button onClick={playAll} className={`${btnPrimary} ml-auto`}>
+                        <Play size={14} /> Play All
+                    </button>
+                </div>
+            )}
+
+            {/* Guide Tone Line (for guide_tones and path_comparison modes) */}
+            {(mode === 'guide_tones' || mode === 'path_comparison') && guideTones.length > 0 && (
+                <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/50">
+                    <p className="font-mono text-[10px] tracking-[0.15em] uppercase text-[var(--color-text-muted)] mb-3">
+                        Guide Tone Line (3rds & 7ths)
+                    </p>
+                    <div className="grid grid-cols-1 gap-1">
+                        <div className="flex items-center gap-1 flex-wrap">
+                            <span className="font-mono text-[10px] text-[var(--color-text-muted)] w-8">3rd:</span>
+                            {guideTones.map((gt, idx) => (
+                                <React.Fragment key={`3-${idx}`}>
+                                    <span className={`px-2 py-1 rounded text-sm font-mono font-bold ${
+                                        activeChordIdx === idx
+                                            ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]'
+                                            : 'text-[var(--color-text-secondary)]'
+                                    }`}>
+                                        {gt.third.note || '—'}
+                                        <span className="text-[9px] text-[var(--color-text-muted)] ml-0.5">({gt.third.intervalLabel})</span>
+                                    </span>
+                                    {idx < guideTones.length - 1 && (
+                                        <span className="text-[var(--color-text-muted)] text-xs">→</span>
+                                    )}
+                                </React.Fragment>
+                            ))}
+                        </div>
+                        <div className="flex items-center gap-1 flex-wrap">
+                            <span className="font-mono text-[10px] text-[var(--color-text-muted)] w-8">7th:</span>
+                            {guideTones.map((gt, idx) => (
+                                <React.Fragment key={`7-${idx}`}>
+                                    <span className={`px-2 py-1 rounded text-sm font-mono font-bold ${
+                                        activeChordIdx === idx
+                                            ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]'
+                                            : 'text-[var(--color-text-secondary)]'
+                                    }`}>
+                                        {gt.seventh.note || '—'}
+                                        <span className="text-[9px] text-[var(--color-text-muted)] ml-0.5">({gt.seventh.intervalLabel})</span>
+                                    </span>
+                                    {idx < guideTones.length - 1 && (
+                                        <span className="text-[var(--color-text-muted)] text-xs">→</span>
+                                    )}
+                                </React.Fragment>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Voice Leading Path Stats */}
+            {voiceLeadingPath && voiceLeadingPath.steps.length > 0 && (
+                <div className="flex items-center gap-6 px-4 py-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/50">
+                    <div>
+                        <p className="font-mono text-[10px] text-[var(--color-text-muted)] uppercase">Movement</p>
+                        <p className="text-lg font-bold text-[var(--color-text)]">{voiceLeadingPath.totalMovement}</p>
+                        <p className="font-mono text-[9px] text-[var(--color-text-muted)]">total frets</p>
+                    </div>
+                    <div>
+                        <p className="font-mono text-[10px] text-[var(--color-text-muted)] uppercase">Common Tones</p>
+                        <p className="text-lg font-bold text-[var(--color-accent)]">{voiceLeadingPath.commonTones}</p>
+                        <p className="font-mono text-[9px] text-[var(--color-text-muted)]">held notes</p>
+                    </div>
+                    <div>
+                        <p className="font-mono text-[10px] text-[var(--color-text-muted)] uppercase">Quality</p>
+                        <p className={`text-lg font-bold ${
+                            voiceLeadingPath.totalMovement <= 4 ? 'text-emerald-400' :
+                            voiceLeadingPath.totalMovement <= 8 ? 'text-[var(--color-accent)]' :
+                            'text-orange-400'
+                        }`}>
+                            {voiceLeadingPath.totalMovement <= 4 ? 'Excellent' :
+                             voiceLeadingPath.totalMovement <= 8 ? 'Good' : 'Fair'}
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {/* Fretboard for active chord */}
+            {activeChordIdx !== null && voiceLeadingPath?.steps[activeChordIdx] && (
+                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} key={activeChordIdx}>
+                    <p className="font-mono text-[10px] text-[var(--color-text-muted)] mb-2 uppercase tracking-wider">
+                        {voiceLeadingPath.steps[activeChordIdx].chord} — {voiceLeadingPath.steps[activeChordIdx].voicing.type} voicing
+                    </p>
+                    <Fretboard
+                        activeNotes={voiceLeadingPath.steps[activeChordIdx].positions}
+                        showIntervals
+                        clickToPlay
+                    />
+                </motion.div>
             )}
         </div>
     );

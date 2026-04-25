@@ -22,7 +22,7 @@ const LARGE_DIR = path.resolve(process.cwd(), 'knowledge', '_large');
 const CHUNK_SIZE = 1500;
 const CHUNK_OVERLAP = 200;
 const PROCESS_BATCH = 50; // How many chunks to embed and store before GC
-const EMBEDDING_MODEL = 'gemini-embedding-001';
+const EMBEDDING_MODEL = 'text-embedding-004';
 
 // ── Text Extraction ──────────────────────────────────────────────────────────
 
@@ -107,7 +107,7 @@ async function processFile(filePath: string, file: string, ai: GoogleGenAI) {
     console.log(`\n  Done: ${text.length.toLocaleString()} characters`);
 
     // 2. Clear old run
-    clearSource(file);
+    await clearSource(file);
 
     // 3. Chunk
     process.stdout.write('  Chunking text arrays... ');
@@ -163,7 +163,7 @@ async function processFile(filePath: string, file: string, ai: GoogleGenAI) {
                 }
             }
 
-            storeChunksBatch(validRows);
+            await storeChunksBatch(validRows);
 
             // Progress Bar Logging
             const progress = Math.min(i + PROCESS_BATCH, chunks.length);
@@ -212,7 +212,7 @@ async function main() {
         await processFile(filePath, file, ai);
     }
 
-    const status = getStatus();
+    const status = await getStatus();
     console.log('\n════════════════════════════════════════════════');
     console.log(`✓ All massive files ingested!`);
     console.log(`  Total chunks in knowledge base: ${status.totalChunks.toLocaleString()}`);

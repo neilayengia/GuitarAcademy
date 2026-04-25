@@ -11,8 +11,7 @@
  * - Root note highlighting
  */
 
-import React, { useMemo, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import React, { useMemo, useCallback, useState } from 'react';
 import type { FretPosition } from '../musicTheory/fretboardMapping';
 import { getNoteAtPosition } from '../musicTheory/fretboardMapping';
 import { playNote } from '../utils/audioEngine';
@@ -96,6 +95,7 @@ export default function Fretboard({
   startFret: propStartFret,
   endFret: propEndFret,
 }: FretboardProps) {
+  const [pressedKey, setPressedKey] = useState<string | null>(null);
 
   // Auto-calculate fret range — always start from 0, extend endFret if needed
   const { startFret, endFret } = useMemo(() => {
@@ -146,9 +146,10 @@ export default function Fretboard({
     return map;
   }, [activeNotes]);
 
-  const handleFretClick = useCallback((string: number, fret: number) => {
+  const handleFretPress = useCallback((string: number, fret: number) => {
     const pos = getNoteAtPosition(string, fret);
     const activePos = activeMap.get(`${string}-${fret}`) || pos;
+    setPressedKey(`${string}-${fret}`);
     if (clickToPlay) playNote(pos.midi, 0.8);
     onNoteClick?.(activePos);
   }, [clickToPlay, onNoteClick, activeMap]);
@@ -178,6 +179,8 @@ export default function Fretboard({
         style={{ transform: `scale(${scaleFactor})`, transformOrigin: 'top left' }}
         role="img"
         aria-label="Interactive guitar fretboard"
+        onPointerLeave={() => setPressedKey(null)}
+        onPointerUp={() => setPressedKey(null)}
       >
         {/* ── Fretboard Background ── */}
         <rect
@@ -327,6 +330,7 @@ export default function Fretboard({
             const fretWidth = FRET_AREA_WIDTH / numFrets;
             const halfW = fret === 0 ? 14 : fretWidth / 2;
             const activeNote = activeMap.get(`${stringNum}-${fret}`);
+            const isPressed = pressedKey === `${stringNum}-${fret}`;
 
             return (
               <rect
@@ -335,16 +339,17 @@ export default function Fretboard({
                 y={cy - STRING_SPACING / 2}
                 width={halfW * 2}
                 height={STRING_SPACING}
-                fill="transparent"
+                fill={isPressed ? 'rgba(212, 164, 74, 0.08)' : 'transparent'}
                 className="cursor-pointer"
                 role="button"
                 tabIndex={activeNote ? 0 : -1}
                 aria-label={`String ${stringNum}, fret ${fret}${activeNote ? ': ' + activeNote.note : ''}`}
-                onClick={() => handleFretClick(stringNum, fret)}
+                onPointerDown={() => handleFretPress(stringNum, fret)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    handleFretClick(stringNum, fret);
+                    handleFretPress(stringNum, fret);
+                    window.setTimeout(() => setPressedKey(null), 120);
                   }
                 }}
               />
@@ -353,44 +358,52 @@ export default function Fretboard({
         )}
 
         {/* ── Active Notes ── */}
-        <AnimatePresence>
-          {activeNotes.filter(pos => pos.fret >= startFret && pos.fret <= endFret).map((pos, idx) => {
+        {activeNotes.filter(pos => pos.fret >= startFret && pos.fret <= endFret).map((pos) => {
             const cx = getFretCenterX(pos.fret);
             const cy = getStringY(pos.string);
             const color = getNoteColor(pos);
             const label = showIntervals ? (pos.interval || pos.note) : pos.note;
             const isRoot = pos.isRoot || pos.interval === 'R';
             const r = isRoot ? 13 : 11;
+            const isPressed = pressedKey === `${pos.string}-${pos.fret}`;
 
             return (
-              <motion.g
-                key={`note-${pos.string}-${pos.fret}-${idx}`}
-                initial={{ scale: 0, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0, opacity: 0 }}
-                transition={{ type: 'spring', stiffness: 400, damping: 20, delay: idx * 0.02 }}
-                style={{ originX: `${cx}px`, originY: `${cy}px` }}
+              <g
+                key={`note-${pos.string}-${pos.fret}`}
                 className="cursor-pointer"
-                onClick={() => handleFretClick(pos.string, pos.fret)}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  handleFretPress(pos.string, pos.fret);
+                }}
               >
                 {isRoot && (
                   <circle cx={cx} cy={cy} r={r + 4} fill={color} opacity={0.15} />
                 )}
-                <circle cx={cx} cy={cy} r={r} fill={color} stroke="#0C0C0E" strokeWidth={2} />
+                {isPressed && (
+                  <circle cx={cx} cy={cy} r={r + 7} fill="none" stroke={color} strokeWidth={1.5} opacity={0.5} />
+                )}
+                <circle
+                  cx={cx}
+                  cy={cy}
+                  r={isPressed ? r + 1.5 : r}
+                  fill={color}
+                  stroke="#0C0C0E"
+                  strokeWidth={2}
+                  style={{ transition: 'r 80ms ease-out' }}
+                />
                 <text
                   x={cx} y={cy + 4}
                   textAnchor="middle" fill="white"
                   fontSize={isRoot ? 10 : 9}
                   fontWeight={isRoot ? 700 : 500}
-                  fontFamily="'Inter', sans-serif"
+                  fontFamily="'Plus Jakarta Sans', 'Inter', sans-serif"
                   style={{ pointerEvents: 'none' }}
                 >
                   {label}
                 </text>
-              </motion.g>
+              </g>
             );
           })}
-        </AnimatePresence>
       </svg>
     </div>
   );

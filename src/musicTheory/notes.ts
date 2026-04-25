@@ -206,3 +206,76 @@ export function prefersFlats(key: string): boolean {
                      'Dm', 'Gm', 'Cm', 'Fm', 'Bbm', 'Ebm'];
   return flatKeys.includes(key);
 }
+
+// ── Enharmonic Spelling Engine ──────────────────────────────────────────────
+// Proper music theory: each scale degree gets its own letter name.
+// Db major = Db-F-Ab-C, never C#-F-G#-C.
+
+/** Letter names in order */
+const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'] as const;
+
+/** Natural pitch class for each letter (C=0, D=2, E=4, F=5, G=7, A=9, B=11) */
+const LETTER_PC: Record<string, number> = {
+  'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11,
+};
+
+/**
+ * Get the letter index (0-6) for a note name.
+ * C=0, D=1, E=2, F=3, G=4, A=5, B=6
+ */
+function letterIndex(name: string): number {
+  const letter = name.charAt(0).toUpperCase();
+  const idx = LETTERS.indexOf(letter as any);
+  if (idx === -1) throw new Error(`Invalid note letter: ${letter}`);
+  return idx;
+}
+
+/**
+ * Map an interval label to its scale degree offset (0-indexed).
+ * 'R' → 0, '2'/'b2'/'#2' → 1, '3'/'b3' → 2, etc.
+ * Compound intervals (9,11,13) map back to their simple degree.
+ */
+export function intervalLabelToDegreeOffset(label: string): number {
+  const cleaned = label.replace(/[#b]+/g, '');
+  const map: Record<string, number> = {
+    'R': 0, '1': 0,
+    '2': 1, '9': 1,
+    '3': 2,
+    '4': 3, '11': 3,
+    '5': 4,
+    '6': 5, '13': 5,
+    '7': 6,
+  };
+  return map[cleaned] ?? 0;
+}
+
+/**
+ * Spell a note correctly given a root and a target degree + pitch class.
+ *
+ * Uses music theory rules: each degree gets its own letter name.
+ * The accidental (sharp/flat/natural/double) is computed to hit the
+ * target pitch class on the correct letter.
+ *
+ * Example: spellNote('Db', 2, 4) → 'F' (major 3rd of Db)
+ * Example: spellNote('Db', 4, 8) → 'Ab' (perfect 5th of Db)
+ */
+export function spellNote(rootName: string, degreeOffset: number, targetPC: number): string {
+  const rootLetter = letterIndex(rootName);
+  const targetLetterIdx = (rootLetter + degreeOffset) % 7;
+  const targetLetter = LETTERS[targetLetterIdx];
+  const naturalPC = LETTER_PC[targetLetter];
+
+  // How many semitones do we need to adjust the natural letter?
+  let diff = ((targetPC - naturalPC) % 12 + 12) % 12;
+
+  // Choose the simplest accidental (prefer closer to 0)
+  // diff: 0=natural, 1=sharp, 2=double-sharp, 10=double-flat, 11=flat
+  if (diff === 0) return targetLetter;
+  if (diff === 1) return `${targetLetter}#`;
+  if (diff === 11) return `${targetLetter}b`;
+  if (diff === 2) return `${targetLetter}##`;
+  if (diff === 10) return `${targetLetter}bb`;
+
+  // Fallback for unusual intervals — use sharp/flat lookup
+  return noteNameFromPitchClass(targetPC, diff > 6);
+}

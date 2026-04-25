@@ -1,7 +1,13 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import Stripe from 'stripe';
-import { supabase } from '../../src/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 
+const getSupabase = () => {
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseKey) throw new Error('Supabase ENV missing');
+    return createClient(supabaseUrl, supabaseKey);
+};
 // Disable Vercel's default JSON body parser for this route
 // Stripe requires the raw, unparsed body for webhook signature verification.
 export const config = {
@@ -44,6 +50,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       
       const userId = session.client_reference_id;
       if (userId) {
+        const supabase = getSupabase();
         // Provide the user access in Supabase
         await supabase
           .from('profiles')

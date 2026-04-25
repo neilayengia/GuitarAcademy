@@ -1,7 +1,7 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { getStatus } from '../src/server/knowledgeDb';
 
-export default function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -15,7 +15,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const stats = getStatus();
+    const stats = await getStatus();
     return res.status(200).json(stats);
   } catch (err: any) {
     console.error('Status error:', err.message);

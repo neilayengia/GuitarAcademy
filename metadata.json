@@ -1,0 +1,7 @@
+{
+  "name": "Virtuoso: Advanced Guitar Academy",
+  "description": "Professional-grade guitar learning platform featuring real-time audio feedback, advanced harmony, and interactive practice loops.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

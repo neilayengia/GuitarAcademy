@@ -1,6 +1,6 @@
 /**
- * FretboardExplorer.tsx — Interactive fretboard with scale/chord visualization
- * Scale playback, clickable notes, CAGED positions
+ * FretboardExplorer.tsx — Scales page
+ * Circle of fifths key selector + scale/chord chip grid + interactive fretboard
  */
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
@@ -112,71 +112,96 @@ export default function FretboardExplorer() {
 
     const displayTitle = useMemo(() => {
         const r = settings.root;
-        if (settings.mode === 'scale') return `${r} ${settings.scaleName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}`;
-        if (settings.mode === 'chord') return `${r}${settings.chordType === 'maj' ? '' : settings.chordType}`;
-        return `${r}${settings.chordType === 'maj' ? '' : settings.chordType} — ${settings.scaleName.replace(/_/g, ' ')}`;
+        const flatMap: Record<string, string> = { 'C#': 'Db', 'D#': 'Eb', 'G#': 'Ab', 'A#': 'Bb' };
+        const dr = flatMap[r] || r;
+        if (settings.mode === 'scale') return `${dr} ${settings.scaleName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}`;
+        if (settings.mode === 'chord') return `${dr}${settings.chordType === 'maj' ? '' : settings.chordType}`;
+        return `${dr}${settings.chordType === 'maj' ? '' : settings.chordType} over ${settings.scaleName.replace(/_/g, ' ')}`;
     }, [settings.root, settings.mode, settings.scaleName, settings.chordType]);
 
     return (
-        <div className="flex-1 p-8 lg:p-10 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto">
             {/* Header */}
-            <div className="mb-6">
-                <p className="font-mono text-[11px] tracking-[0.15em] uppercase text-text-muted mb-2">Fretboard Explorer</p>
-                <h1 className="text-3xl lg:text-4xl font-bold tracking-tight" style={{ letterSpacing: '-0.02em' }}>
-                    {displayTitle}
+            <div className="px-10 pt-10 pb-6">
+                <p className="text-[11px] tracking-[3px] uppercase text-[#555] mb-3">Explorer</p>
+                <h1 className="text-4xl lg:text-5xl font-bold tracking-tight mb-2" style={{ fontFamily: 'Plus Jakarta Sans' }}>
+                    Scales <span className="font-light opacity-30">& Modes</span>
                 </h1>
-                <p className="text-text-secondary text-sm mt-1">{activeNotes.length} notes on fretboard</p>
-            </div>
 
-            {/* Action bar */}
-            <div className="flex items-center gap-3 mb-6 flex-wrap">
+                {/* Controls — circle of fifths + chips */}
+                <div className="mt-6 mb-6">
+                    <FretboardControls settings={settings} onChange={setSettings} />
+                </div>
+
+                {/* Currently selected + actions */}
+                <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-5">
+                        <div>
+                            <p className="text-[10px] tracking-[2px] uppercase text-[#555] mb-0.5">Active</p>
+                            <p className="text-2xl font-bold text-white">{displayTitle}</p>
+                        </div>
+                        <div className="w-px h-8 bg-white/[0.06]" />
+                        <p className="text-[13px] text-[#555]">
+                            {activeNotes.length} notes on fretboard
+                        </p>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                        {scaleNotesForPlayback.length > 0 && (
+                            <button onClick={handlePlayScale}
+                                className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold transition-all cursor-pointer ${
+                                    isPlayingScale
+                                        ? 'bg-white text-black'
+                                        : 'bg-white/[0.04] border border-white/[0.06] text-white hover:bg-white/[0.08]'
+                                }`}>
+                                {isPlayingScale ? <Square size={14} /> : <Play size={14} className="ml-0.5" />}
+                                {isPlayingScale ? 'Stop' : 'Play Scale'}
+                            </button>
+                        )}
+                        {lastClickedNote && (
+                            <div className="px-4 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-sm">
+                                <span className="text-white/30">Last: </span>
+                                <span className="text-white font-bold">{lastClickedNote.note}{lastClickedNote.octave}</span>
+                                {lastClickedNote.interval && <span className="text-white/40 ml-1">({lastClickedNote.interval})</span>}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Scale degree buttons */}
                 {scaleNotesForPlayback.length > 0 && (
-                    <button onClick={handlePlayScale}
-                        className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold transition-all ${isPlayingScale ? 'bg-white text-black' : 'bg-elevated border border-border text-white hover:bg-border'}`}>
-                        {isPlayingScale ? <Square size={14} /> : <Play size={14} className="ml-0.5" />}
-                        {isPlayingScale ? 'Stop' : 'Play Scale'}
-                    </button>
-                )}
-                {lastClickedNote && (
-                    <div className="px-4 py-2 bg-elevated border border-border rounded-xl text-sm">
-                        <span className="text-text-muted">Last: </span>
-                        <span className="text-white font-bold">{lastClickedNote.note}{lastClickedNote.octave}</span>
-                        {lastClickedNote.interval && <span className="text-text-secondary ml-1">({lastClickedNote.interval})</span>}
+                    <div className="flex items-center gap-2 mb-4 flex-wrap">
+                        <span className="text-[10px] tracking-[2px] uppercase text-white/20 mr-1 font-mono">Degrees</span>
+                        {scaleNotesForPlayback.map((pos, i) => (
+                            <button key={i} onClick={() => playNote(pos.midi, 0.8, 0.5)}
+                                className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold transition-all hover:scale-105 cursor-pointer ${
+                                    pos.isRoot || pos.interval === 'R'
+                                        ? 'bg-accent text-black'
+                                        : 'bg-white/[0.04] border border-white/[0.06] text-white hover:bg-white/[0.08]'
+                                }`}>
+                                {pos.note}
+                            </button>
+                        ))}
                     </div>
                 )}
             </div>
 
-            {/* Scale tones */}
-            {scaleNotesForPlayback.length > 0 && (
-                <div className="flex items-center gap-2 mb-6 flex-wrap">
-                    <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-text-muted mr-1">Scale</span>
-                    {scaleNotesForPlayback.map((pos, i) => (
-                        <button key={i} onClick={() => playNote(pos.midi, 0.8, 0.5)}
-                            className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold transition-all hover:scale-105 ${pos.isRoot || pos.interval === 'R' ? 'bg-accent text-black' : 'bg-card border border-border text-white hover:bg-elevated'}`}>
-                            {pos.note}
-                        </button>
-                    ))}
-                </div>
-            )}
-
             {/* Fretboard */}
-            <div className="card p-6 mb-6">
-                <Fretboard activeNotes={activeNotes} showIntervals={settings.showIntervals} clickToPlay={true}
-                    onNoteClick={setLastClickedNote} highlightRange={highlightRange ?? undefined} />
+            <div className="px-10 pb-6">
+                <div className="bg-[#111] rounded-2xl p-6 border border-white/[0.04]">
+                    <Fretboard activeNotes={activeNotes} showIntervals={settings.showIntervals} clickToPlay={true}
+                        onNoteClick={setLastClickedNote} highlightRange={highlightRange ?? undefined} />
+                </div>
             </div>
 
             {/* Legend */}
-            <div className="flex flex-wrap items-center gap-5 text-xs text-text-secondary mb-6">
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{ background: '#d4a44a' }} /><span>Root</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{ background: '#e8e8e8' }} /><span>Chord Tone</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{ background: '#5b9bd5' }} /><span>Scale Tone</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{ background: '#b07ed8' }} /><span>Tension</span></div>
-            </div>
-
-            {/* Controls */}
-            <div className="card p-6">
-                <h3 className="font-mono text-[11px] tracking-[0.12em] uppercase text-text-muted mb-4">Controls</h3>
-                <FretboardControls settings={settings} onChange={setSettings} />
+            <div className="px-10 pb-10">
+                <div className="flex flex-wrap items-center gap-6 text-[11px] text-white/35">
+                    <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full" style={{ background: '#d4a44a' }} /><span>Root</span></div>
+                    <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full" style={{ background: '#e8e8e8' }} /><span>Chord Tone</span></div>
+                    <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full" style={{ background: '#5b9bd5' }} /><span>Scale Tone</span></div>
+                    <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full" style={{ background: '#b07ed8' }} /><span>Tension</span></div>
+                </div>
             </div>
         </div>
     );

@@ -10,7 +10,7 @@ import {
     normalizeNoteName, pitchClass, noteNameFromPitchClass,
     parseNoteString, noteToMidi, midiToNote, midiToFrequency,
     frequencyToMidi, frequencyToNote, createNote, semitoneDist, transpose,
-    getOpenStringMidi, prefersFlats,
+    getOpenStringMidi, prefersFlats, spellNote, intervalLabelToDegreeOffset,
 
     // Intervals
     getInterval, applyInterval, applyIntervalByName,
@@ -166,6 +166,40 @@ describe('Notes', () => {
         });
     });
 
+    describe('spellNote', () => {
+        it('should spell Db major chord tones correctly', () => {
+            // Db major: Db-F-Ab
+            expect(spellNote('Db', 0, 1)).toBe('Db');  // root
+            expect(spellNote('Db', 2, 5)).toBe('F');    // major 3rd
+            expect(spellNote('Db', 4, 8)).toBe('Ab');   // perfect 5th
+        });
+
+        it('should spell sharp key chord tones correctly', () => {
+            // F# minor: F#-A-C#
+            expect(spellNote('F#', 0, 6)).toBe('F#');
+            expect(spellNote('F#', 2, 9)).toBe('A');
+            expect(spellNote('F#', 4, 1)).toBe('C#');
+        });
+
+        it('should handle natural notes', () => {
+            expect(spellNote('C', 2, 4)).toBe('E');
+            expect(spellNote('C', 4, 7)).toBe('G');
+        });
+    });
+
+    describe('intervalLabelToDegreeOffset', () => {
+        it('should map labels to degree offsets', () => {
+            expect(intervalLabelToDegreeOffset('R')).toBe(0);
+            expect(intervalLabelToDegreeOffset('3')).toBe(2);
+            expect(intervalLabelToDegreeOffset('b3')).toBe(2);
+            expect(intervalLabelToDegreeOffset('5')).toBe(4);
+            expect(intervalLabelToDegreeOffset('b7')).toBe(6);
+            expect(intervalLabelToDegreeOffset('9')).toBe(1);   // compound
+            expect(intervalLabelToDegreeOffset('#11')).toBe(3);  // compound
+            expect(intervalLabelToDegreeOffset('13')).toBe(5);   // compound
+        });
+    });
+
     describe('prefersFlats', () => {
         it('should identify flat keys', () => {
             expect(prefersFlats('F')).toBe(true);
@@ -266,13 +300,28 @@ describe('Chords', () => {
 
         it('should build extended chords', () => {
             const chord = buildChord('C', '9');
-            expect(chord.notes).toEqual(['C', 'E', 'G', 'A#', 'D']);
+            expect(chord.notes).toEqual(['C', 'E', 'G', 'Bb', 'D']);
         });
 
-        it('should handle flat root notes', () => {
+        it('should handle flat root notes with correct spelling', () => {
             const chord = buildChord('Bb', '7');
-            expect(chord.root).toBe('A#'); // normalized
-            expect(chord.notes).toContain('D');
+            expect(chord.root).toBe('Bb');
+            expect(chord.notes).toEqual(['Bb', 'D', 'F', 'Ab']);
+        });
+
+        it('should spell Db major correctly', () => {
+            const chord = buildChord('Db', 'maj7');
+            expect(chord.notes).toEqual(['Db', 'F', 'Ab', 'C']);
+        });
+
+        it('should spell Gb major correctly', () => {
+            const chord = buildChord('Gb', 'maj');
+            expect(chord.notes).toEqual(['Gb', 'Bb', 'Db']);
+        });
+
+        it('should spell F# minor correctly', () => {
+            const chord = buildChord('F#', 'm7');
+            expect(chord.notes).toEqual(['F#', 'A', 'C#', 'E']);
         });
     });
 
@@ -365,12 +414,27 @@ describe('Scales', () => {
             const scale = buildScale('A', 'blues');
             expect(scale.notes).toHaveLength(6);
             expect(scale.notes).toContain('A');
-            expect(scale.notes).toContain('D#'); // b5 (Eb normalized to D#)
+            expect(scale.notes).toContain('Eb'); // b5 — correct enharmonic spelling
         });
 
         it('should build altered scale', () => {
             const scale = buildScale('G', 'altered');
             expect(scale.notes).toHaveLength(7);
+        });
+
+        it('should spell Db major scale correctly', () => {
+            const scale = buildScale('Db', 'major');
+            expect(scale.notes).toEqual(['Db', 'Eb', 'F', 'Gb', 'Ab', 'Bb', 'C']);
+        });
+
+        it('should spell F# dorian correctly', () => {
+            const scale = buildScale('F#', 'dorian');
+            expect(scale.notes).toEqual(['F#', 'G#', 'A', 'B', 'C#', 'D#', 'E']);
+        });
+
+        it('should spell Bb mixolydian correctly', () => {
+            const scale = buildScale('Bb', 'mixolydian');
+            expect(scale.notes).toEqual(['Bb', 'C', 'D', 'Eb', 'F', 'G', 'Ab']);
         });
     });
 
@@ -502,7 +566,7 @@ describe('Fretboard Mapping', () => {
             // Chord tones should have accent color
             const roots = overlay.filter(p => p.isRoot);
             expect(roots.length).toBeGreaterThan(0);
-            expect(roots[0].color).toBe('#C8A96E');
+            expect(roots[0].color).toBe('#d4a44a');
         });
     });
 });

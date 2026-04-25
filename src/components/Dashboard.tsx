@@ -1,19 +1,13 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
-import { ArrowRight, Layers, GitBranch, PlayCircle, Mic, TrendingUp, Zap, BookOpen, Check } from "lucide-react";
+import {
+  ArrowRight, BookOpen, Check, ChevronRight, Zap,
+} from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { useAuth } from "../contexts/AuthContext";
-import { MODULE_1, CURRICULUM } from "../data/curriculum";
+import { MODULE_1, CURRICULUM, getTotalLessons } from "../data/curriculum";
 
-const FEATURES = [
-  { to: "/voicings",      icon: Layers,     label: "Voicings",        description: "Chord library" },
-  { to: "/fretboard",     icon: GitBranch,  label: "Fretboard",       description: "Explorer" },
-  { to: "/practice",      icon: PlayCircle, label: "Practice",        description: "Focus mode" },
-  { to: "/jam",           icon: Mic,        label: "Jam Studio",      description: "Improvise" },
-  { to: "/instructor",    icon: Zap,        label: "AI Instructor",   description: "Live session" },
-  { to: "/analysis",      icon: TrendingUp, label: "Progress",        description: "Your stats" },
-];
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -23,13 +17,26 @@ export default function Dashboard() {
 
   const hours = Math.floor(totalPracticeMinutes / 60);
   const mins = totalPracticeMinutes % 60;
-  const practiceLabel = hours > 0 ? `${hours}h ${mins}m` : totalPracticeMinutes > 0 ? `${mins}m` : null;
+  const practiceLabel = hours > 0 ? `${hours}h ${mins}m` : totalPracticeMinutes > 0 ? `${mins}m` : "0m";
 
-  // Count completed lessons
-  const completedCount = MODULE_1.lessons.filter((l) => {
-    const key = `mod${l.moduleId}_lesson${l.lessonIndex}`;
-    return lessonProgress[key]?.completed;
-  }).length;
+  const totalLessons = getTotalLessons();
+  const completedTotal = CURRICULUM.reduce((sum, mod) =>
+    sum + mod.lessons.filter(l => lessonProgress[`mod${l.moduleId}_lesson${l.lessonIndex}`]?.completed).length, 0
+  );
+
+  // Find the next incomplete lesson for "Continue" CTA
+  const nextLesson = (() => {
+    for (const mod of CURRICULUM) {
+      const isLocked = mod.subtitle.includes('Pro') && profile?.subscription_tier !== 'pro';
+      if (isLocked) continue;
+      for (const l of mod.lessons) {
+        if (!lessonProgress[`mod${l.moduleId}_lesson${l.lessonIndex}`]?.completed) {
+          return l;
+        }
+      }
+    }
+    return CURRICULUM[0].lessons[0];
+  })();
 
   return (
     <div className="flex-1 flex flex-col min-h-0 relative overflow-hidden">
@@ -37,251 +44,218 @@ export default function Dashboard() {
       {/* ── Photographic backdrop ── */}
       <div className="absolute inset-0 pointer-events-none">
         <img
-          src="/hero-guitar.jpg"
+          src="/hero-guitar-new.avif"
           alt=""
-          className="w-full h-full object-cover"
-          style={{ opacity: 0.14, filter: "saturate(0.25) contrast(1.15)" }}
+          className="w-full h-full object-cover object-center"
+          style={{ opacity: 0.12, filter: "saturate(0.2) contrast(1.2)" }}
         />
-        {/* Left solid fade */}
         <div className="absolute inset-0" style={{
-          background: "linear-gradient(to right, rgba(10,10,10,0.98) 0%, rgba(10,10,10,0.85) 40%, rgba(10,10,10,0.3) 75%, rgba(10,10,10,0.15) 100%)",
+          background: "linear-gradient(135deg, rgba(var(--color-bg-rgb),0.97) 0%, rgba(var(--color-bg-rgb),0.85) 50%, rgba(var(--color-bg-rgb),0.7) 100%)",
         }} />
-        {/* Bottom solid fade */}
         <div className="absolute inset-0" style={{
-          background: "linear-gradient(to top, rgba(10,10,10,1) 0%, rgba(10,10,10,0.55) 28%, transparent 55%)",
-        }} />
-        {/* Top vignette */}
-        <div className="absolute inset-0" style={{
-          background: "linear-gradient(to bottom, rgba(10,10,10,0.45) 0%, transparent 20%)",
+          background: "linear-gradient(to top, rgba(var(--color-bg-rgb),1) 0%, transparent 40%)",
         }} />
       </div>
 
-      {/* ── Main content ── */}
-      <div className="relative z-10 flex flex-col h-full px-10 lg:px-16 py-10 lg:py-12 overflow-y-auto">
+      {/* ── Main layout: two-column hero + curriculum ── */}
+      <div className="relative z-10 flex-1 flex flex-col lg:flex-row min-h-0">
 
-        {/* Badge */}
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: "easeOut" }}
-        >
-          <span className="inline-flex items-center gap-2.5 px-4 py-2 rounded-full border border-border bg-card/40 backdrop-blur-sm">
-            <span className="w-1.5 h-1.5 rounded-full bg-accent animate-glow" />
-            <span className="font-mono text-[11px] tracking-[0.15em] uppercase text-text-secondary">
-              Advanced Fretboard Mastery
-            </span>
-          </span>
-        </motion.div>
+        {/* ═══ LEFT: Hero zone ═══ */}
+        <div className="lg:w-[55%] flex flex-col justify-center px-10 lg:px-16 py-10 lg:py-0">
 
-        {/* Headline */}
-        <motion.div
-          className="mt-8 mb-6"
-          style={{ maxWidth: "680px" }}
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: "easeOut", delay: 0.1 }}
-        >
-          <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-text-muted mb-3">
+          {/* Welcome line */}
+          <motion.p
+            className="font-mono text-[11px] tracking-[0.2em] uppercase text-text-muted mb-6"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.4 }}
+          >
             Welcome back, {displayName}
-          </p>
-          <h1 style={{
-            fontSize: "clamp(3rem, 7vw, 6rem)",
-            fontWeight: 700,
-            lineHeight: 0.9,
-            letterSpacing: "-0.035em",
-          }}>
+          </motion.p>
+
+          {/* Headline */}
+          <motion.h1
+            className="mb-8"
+            style={{
+              fontSize: "clamp(2.8rem, 5.5vw, 5rem)",
+              fontWeight: 700,
+              lineHeight: 0.92,
+              letterSpacing: "-0.035em",
+            }}
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: "easeOut", delay: 0.08 }}
+          >
             <span className="block text-text">The Art of</span>
-            <span className="block" style={{ fontWeight: 300, color: "rgba(240,240,240,0.18)" }}>
+            <span className="block text-accent" style={{ fontWeight: 300 }}>
               Mastery
             </span>
-          </h1>
-        </motion.div>
+          </motion.h1>
 
-        {/* Body copy */}
-        <motion.p
-          className="text-text-secondary mb-8"
-          style={{ maxWidth: "460px", fontSize: "0.9375rem", lineHeight: 1.7 }}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-        >
-          Advanced harmony, voice leading, and chord voicings. A practice environment built for serious musicians.
-        </motion.p>
-
-        {/* CTAs */}
-        <motion.div
-          className="flex items-center gap-4 mb-10"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.28 }}
-        >
-          <button
-            onClick={() => navigate("/lesson/1/0")}
-            className="btn-primary px-7 py-3.5 text-sm"
-          >
-            {completedCount === 0 ? 'Start Learning' : 'Continue Learning'}
-            <ArrowRight size={15} strokeWidth={2} />
-          </button>
-          <button
-            onClick={() => navigate("/practice")}
-            className="btn-secondary px-7 py-3.5 text-sm"
-          >
-            Practice Room
-          </button>
-        </motion.div>
-
-        {/* ── Curriculum Section ── */}
-        <motion.div
-          className="mb-8"
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.32 }}
-        >
-          {CURRICULUM.map((module) => {
-            const isLocked = module.id > 1 && profile?.subscription_tier !== 'pro';
-            // Count completed for this specific module
-            const modCompletedCount = module.lessons.filter((l) => lessonProgress[`mod${l.moduleId}_lesson${l.lessonIndex}`]?.completed).length;
-
-            return (
-              <div key={module.id} className="mb-10 last:mb-0">
-                <div className="flex items-center gap-3 mb-4">
-                  {isLocked ? (
-                    <Zap size={16} className="text-accent" strokeWidth={1.8} />
-                  ) : (
-                    <BookOpen size={16} className="text-text-muted" strokeWidth={1.8} />
-                  )}
-                  <h2 className={`font-mono text-[11px] tracking-[0.15em] uppercase ${isLocked ? 'text-accent font-bold' : 'text-text-muted'}`}>
-                    {module.title} {isLocked && <span className="text-[9px] bg-accent/20 px-1.5 py-0.5 rounded ml-2">PRO</span>}
-                  </h2>
-                  {!isLocked && (
-                    <span className="font-mono text-[10px] text-accent ml-auto">
-                      {modCompletedCount} / {module.lessons.length} complete
-                    </span>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
-                  {module.lessons.map((lesson) => {
-                    const key = `mod${lesson.moduleId}_lesson${lesson.lessonIndex}`;
-                    const isComplete = !isLocked && lessonProgress[key]?.completed;
-
-                    return (
-                      <button
-                        key={lesson.id}
-                        id={`lesson-${lesson.moduleId}-${lesson.lessonIndex}`}
-                        onClick={() => isLocked ? navigate('/pricing') : navigate(`/lesson/${lesson.moduleId}/${lesson.lessonIndex}`)}
-                        className={`group relative flex flex-col gap-2 p-4 rounded-xl border text-left transition-all duration-200 ${
-                          isComplete
-                            ? 'bg-emerald-500/5 border-emerald-500/20 hover:border-emerald-500/40'
-                            : isLocked 
-                            ? 'bg-card/20 border-border-subtle hover:border-accent opacity-75 hover:opacity-100'
-                            : 'bg-card/30 border-border-subtle backdrop-blur-sm hover:bg-card/60 hover:border-border'
-                        }`}
-                      >
-                        <div className="flex flex-1 items-center justify-between">
-                          <span className={`text-xl transition-transform duration-300 ${isLocked ? 'opacity-50' : isComplete ? 'scale-110' : 'group-hover:scale-110'}`}>
-                            {isLocked ? '🔒' : lesson.icon}
-                          </span>
-                          {isComplete && (
-                            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20">
-                              <Check size={12} className="text-emerald-400" strokeWidth={3} />
-                            </span>
-                          )}
-                        </div>
-                        <div>
-                          <p className={`text-[13px] font-medium leading-tight transition-colors duration-200 ${
-                            isLocked ? 'text-text-muted' : isComplete ? 'text-emerald-300' : 'text-text-secondary group-hover:text-text'
-                          }`}>
-                            {lesson.title}
-                          </p>
-                          <p className={`text-[11px] leading-tight mt-0.5 ${isLocked ? 'text-text-muted/50' : 'text-text-muted'}`}>
-                            {lesson.subtitle}
-                          </p>
-                        </div>
-                        <p className={`text-[10px] font-mono mt-auto ${isLocked ? 'text-accent' : 'text-text-muted'}`}>
-                          {isLocked ? 'Upgrade to Unlock' : `~${lesson.estimatedMinutes} min`}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </motion.div>
-
-        {/* ── Bottom section: stats + feature grid ── */}
-        <div className="space-y-6">
-
-          {/* Stats row — only shown once user has data */}
-          {(currentStreak > 0 || totalPracticeMinutes > 0 || sessionsCompleted > 0) && (
-            <motion.div
-              className="flex items-center gap-10"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.5, delay: 0.35 }}
-            >
-              {currentStreak > 0 && (
-                <div>
-                  <p className="text-text text-2xl font-bold tracking-tight leading-none">{currentStreak}</p>
-                  <p className="font-mono text-[10px] tracking-[0.12em] uppercase text-text-muted mt-1">Day Streak</p>
-                </div>
-              )}
-              {practiceLabel && (
-                <div>
-                  <p className="text-text text-2xl font-bold tracking-tight leading-none">{practiceLabel}</p>
-                  <p className="font-mono text-[10px] tracking-[0.12em] uppercase text-text-muted mt-1">Practiced</p>
-                </div>
-              )}
-              {sessionsCompleted > 0 && (
-                <div>
-                  <p className="text-text text-2xl font-bold tracking-tight leading-none">{sessionsCompleted}</p>
-                  <p className="font-mono text-[10px] tracking-[0.12em] uppercase text-text-muted mt-1">Sessions</p>
-                </div>
-              )}
-            </motion.div>
-          )}
-
-          {/* Feature quick-access grid */}
+          {/* Stats strip — always visible, zero state handled */}
           <motion.div
-            className="grid grid-cols-3 sm:grid-cols-6 gap-2"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45, delay: 0.38 }}
+            className="flex items-center gap-8 mb-10"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.5, delay: 0.16 }}
           >
-            {FEATURES.map((f) => {
-              const Icon = f.icon;
-              const isLocked = f.label === "AI Instructor" && profile?.subscription_tier !== 'pro';
-
-              return (
-                <button
-                  key={f.to}
-                  onClick={() => isLocked ? navigate('/pricing') : navigate(f.to)}
-                  className={`group flex flex-col gap-2 p-3.5 rounded-xl border border-border-subtle bg-card/30 backdrop-blur-sm transition-all duration-200 text-left ${
-                    isLocked ? 'opacity-70 cursor-pointer hover:border-accent hover:opacity-100' : 'hover:bg-card/60 hover:border-border'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <Icon size={16} className={`transition-colors duration-200 ${isLocked ? 'text-accent' : 'text-text-muted group-hover:text-accent'}`} strokeWidth={1.8} />
-                    {isLocked && <span className="text-[9px] font-bold text-accent bg-accent/20 px-1.5 py-0.5 rounded">PRO</span>}
-                  </div>
-                  <div>
-                    <p className={`text-[13px] font-medium transition-colors duration-200 leading-tight ${
-                      isLocked ? 'text-text-muted mt-1' : 'text-text-secondary group-hover:text-text'
-                    }`}>
-                      {f.label}
-                    </p>
-                    <p className={`text-[11px] leading-tight mt-0.5 ${isLocked ? 'text-accent opacity-80' : 'text-text-muted'}`}>
-                      {isLocked ? 'Unlock access' : f.description}
-                    </p>
-                  </div>
-                </button>
-              );
-            })}
+            <div className="pr-8 border-r border-border-subtle">
+              <p className="text-text text-2xl font-bold tracking-tight leading-none">{completedTotal}<span className="text-text-muted font-normal text-base">/{totalLessons}</span></p>
+              <p className="font-mono text-[10px] tracking-[0.12em] uppercase text-text-muted mt-1.5">Lessons</p>
+            </div>
+            <div className="pr-8 border-r border-border-subtle">
+              <p className="text-text text-2xl font-bold tracking-tight leading-none">{currentStreak}</p>
+              <p className="font-mono text-[10px] tracking-[0.12em] uppercase text-text-muted mt-1.5">Day Streak</p>
+            </div>
+            <div className="pr-8 border-r border-border-subtle">
+              <p className="text-text text-2xl font-bold tracking-tight leading-none">{practiceLabel}</p>
+              <p className="font-mono text-[10px] tracking-[0.12em] uppercase text-text-muted mt-1.5">Practiced</p>
+            </div>
+            <div>
+              <p className="text-text text-2xl font-bold tracking-tight leading-none">{sessionsCompleted}</p>
+              <p className="font-mono text-[10px] tracking-[0.12em] uppercase text-text-muted mt-1.5">Sessions</p>
+            </div>
           </motion.div>
 
+          {/* CTA */}
+          <motion.div
+            className="flex items-center gap-4"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.24 }}
+          >
+            <button
+              onClick={() => navigate(`/lesson/${nextLesson.moduleId}/${nextLesson.lessonIndex}`)}
+              className="btn-primary px-7 py-3.5 text-sm"
+            >
+              {completedTotal === 0 ? "Start Learning" : "Continue Learning"}
+              <ArrowRight size={15} strokeWidth={2} />
+            </button>
+            <button
+              onClick={() => navigate("/practice")}
+              className="btn-secondary px-7 py-3.5 text-sm"
+            >
+              Practice Room
+            </button>
+          </motion.div>
         </div>
+
+        {/* ═══ RIGHT: Curriculum panel ═══ */}
+        <motion.div
+          className="lg:w-[45%] flex flex-col min-h-0 lg:border-l border-border-subtle"
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.5, delay: 0.2 }}
+        >
+          {/* Panel header */}
+          <div className="px-8 pt-8 pb-4 flex items-center justify-between flex-shrink-0">
+            <h2 className="font-mono text-[11px] tracking-[0.15em] uppercase text-text-muted">
+              Curriculum
+            </h2>
+            <span className="font-mono text-[10px] text-accent">
+              {completedTotal} / {totalLessons} complete
+            </span>
+          </div>
+
+          {/* Scrollable lesson list */}
+          <div className="flex-1 overflow-y-auto px-8 pb-6 space-y-6">
+            {CURRICULUM.map((module) => {
+              const isLocked = module.subtitle.includes("Pro") && profile?.subscription_tier !== "pro";
+              const modCompleted = module.lessons.filter(
+                (l) => lessonProgress[`mod${l.moduleId}_lesson${l.lessonIndex}`]?.completed
+              ).length;
+
+              return (
+                <div key={module.id}>
+                  {/* Module header */}
+                  <div className="flex items-center gap-2.5 mb-3">
+                    {isLocked ? (
+                      <Zap size={14} className="text-accent" strokeWidth={2} />
+                    ) : (
+                      <BookOpen size={14} className="text-text-muted" strokeWidth={1.8} />
+                    )}
+                    <span className={`font-mono text-[10px] tracking-[0.15em] uppercase ${isLocked ? "text-accent font-bold" : "text-text-muted"}`}>
+                      {module.title}
+                    </span>
+                    {isLocked && (
+                      <span className="text-[9px] bg-accent/20 text-accent px-1.5 py-0.5 rounded font-bold">PRO</span>
+                    )}
+                    {!isLocked && (
+                      <span className="font-mono text-[10px] text-text-faint ml-auto">
+                        {modCompleted}/{module.lessons.length}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Lesson rows — compact list, not cards */}
+                  <div className="space-y-1">
+                    {module.lessons.map((lesson, idx) => {
+                      const key = `mod${lesson.moduleId}_lesson${lesson.lessonIndex}`;
+                      const isComplete = !isLocked && lessonProgress[key]?.completed;
+                      const isNext = !isLocked && !isComplete && lesson.id === nextLesson.id;
+
+                      return (
+                        <button
+                          key={lesson.id}
+                          onClick={() => isLocked ? navigate("/pricing") : navigate(`/lesson/${lesson.moduleId}/${lesson.lessonIndex}`)}
+                          className={`group w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-left transition-all duration-150 ${
+                            isNext
+                              ? "bg-accent/8 border border-accent/20 hover:border-accent/40"
+                              : isComplete
+                              ? "hover:bg-card/40"
+                              : isLocked
+                              ? "opacity-60 hover:opacity-80"
+                              : "hover:bg-card/40"
+                          }`}
+                        >
+                          {/* Status indicator */}
+                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                            isComplete
+                              ? "bg-emerald-500/15"
+                              : isNext
+                              ? "bg-accent/15"
+                              : isLocked
+                              ? "bg-card/40"
+                              : "bg-card/60"
+                          }`}>
+                            {isComplete ? (
+                              <Check size={13} className="text-emerald-400" strokeWidth={2.5} />
+                            ) : isLocked ? (
+                              <span className="text-xs opacity-50">🔒</span>
+                            ) : (
+                              <span className="font-mono text-[11px] text-text-muted font-medium">{idx + 1}</span>
+                            )}
+                          </div>
+
+                          {/* Lesson info */}
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-[13px] font-medium leading-tight truncate ${
+                              isComplete ? "text-emerald-300/80" : isNext ? "text-text" : isLocked ? "text-text-muted" : "text-text-secondary group-hover:text-text"
+                            }`}>
+                              {lesson.title}
+                            </p>
+                            <p className="text-[11px] text-text-muted leading-tight mt-0.5 truncate">
+                              {lesson.subtitle}
+                            </p>
+                          </div>
+
+                          {/* Duration + arrow */}
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <span className="font-mono text-[10px] text-text-muted">{lesson.estimatedMinutes}m</span>
+                            {isNext && <ChevronRight size={14} className="text-accent" />}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </motion.div>
       </div>
+
+
     </div>
   );
 }

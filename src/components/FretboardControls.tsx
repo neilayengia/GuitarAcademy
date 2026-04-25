@@ -1,17 +1,14 @@
 /**
  * FretboardControls.tsx — Control panel for the interactive fretboard
- *
- * Toggles for scale overlay, interval labels, CAGED positions,
- * root/scale/chord selection.
+ * Circle of fifths + scale category chips + toggles
  */
 
 import React from 'react';
-import { Music, Guitar, Layers, Hash, Eye, Grid3X3 } from 'lucide-react';
-import { SHARP_NOTES, FLAT_NOTES } from '../musicTheory/notes';
+import { Hash, Eye } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import CircleOfFifths from './CircleOfFifths';
 import { SCALE_TYPES, type ScaleType } from '../musicTheory/scales';
-import { CHORD_TYPES, type ChordType } from '../musicTheory/chords';
-
-// ── Types ────────────────────────────────────────────────────────────────────
+import { CHORD_TYPES } from '../musicTheory/chords';
 
 export type FretboardMode = 'scale' | 'chord' | 'chord_scale';
 
@@ -22,7 +19,7 @@ export interface FretboardSettings {
     chordType: string;
     showIntervals: boolean;
     showCAGED: boolean;
-    cagedPosition: number; // 0-4 for C-A-G-E-D
+    cagedPosition: number;
     fretRange: { start: number; end: number } | null;
 }
 
@@ -31,29 +28,31 @@ interface FretboardControlsProps {
     onChange: (settings: FretboardSettings) => void;
 }
 
-// ── Grouped Scale Options ────────────────────────────────────────────────────
-
-const SCALE_GROUPS = [
-    { label: 'Major Modes', scales: SCALE_TYPES.filter(s => s.category === 'major_modes') },
-    { label: 'Melodic Minor', scales: SCALE_TYPES.filter(s => s.category === 'melodic_minor_modes') },
-    { label: 'Harmonic Minor', scales: SCALE_TYPES.filter(s => s.category === 'harmonic_minor_modes') },
-    { label: 'Pentatonic & Blues', scales: SCALE_TYPES.filter(s => s.category === 'pentatonic' || s.category === 'blues') },
-    { label: 'Symmetric', scales: SCALE_TYPES.filter(s => s.category === 'symmetric') },
-    { label: 'Bebop', scales: SCALE_TYPES.filter(s => s.category === 'other') },
+const SCALE_CATEGORIES = [
+    { key: 'major_modes', label: 'Major Modes' },
+    { key: 'melodic_minor_modes', label: 'Melodic Minor' },
+    { key: 'harmonic_minor_modes', label: 'Harmonic Minor' },
+    { key: 'pentatonic', label: 'Pentatonic' },
+    { key: 'blues', label: 'Blues' },
+    { key: 'symmetric', label: 'Symmetric' },
+    { key: 'other', label: 'Bebop' },
 ];
 
-const CHORD_GROUPS = [
-    { label: 'Triads', chords: CHORD_TYPES.filter(c => c.category === 'triad') },
-    { label: '7th Chords', chords: CHORD_TYPES.filter(c => c.category === 'seventh') },
-    { label: 'Extended', chords: CHORD_TYPES.filter(c => c.category === 'extended') },
-    { label: 'Altered', chords: CHORD_TYPES.filter(c => c.category === 'altered') },
-    { label: 'Suspended', chords: CHORD_TYPES.filter(c => c.category === 'suspended') },
-    { label: 'Added', chords: CHORD_TYPES.filter(c => c.category === 'added') },
+const CHORD_CATEGORIES = [
+    { key: 'triad', label: 'Triads' },
+    { key: 'seventh', label: '7ths' },
+    { key: 'extended', label: 'Extended' },
+    { key: 'altered', label: 'Altered' },
+    { key: 'suspended', label: 'Sus' },
+    { key: 'added', label: 'Added' },
 ];
+
+const COF_TO_SHARP: Record<string, string> = {
+    'C': 'C', 'G': 'G', 'D': 'D', 'A': 'A', 'E': 'E', 'B': 'B',
+    'F#': 'F#', 'Db': 'C#', 'Ab': 'G#', 'Eb': 'D#', 'Bb': 'A#', 'F': 'F',
+};
 
 const CAGED_NAMES = ['C', 'A', 'G', 'E', 'D'];
-
-// ── Default settings ─────────────────────────────────────────────────────────
 
 export const DEFAULT_SETTINGS: FretboardSettings = {
     root: 'C',
@@ -66,148 +65,228 @@ export const DEFAULT_SETTINGS: FretboardSettings = {
     fretRange: null,
 };
 
-// ── Component ────────────────────────────────────────────────────────────────
-
 export default function FretboardControls({ settings, onChange }: FretboardControlsProps) {
     const update = (partial: Partial<FretboardSettings>) => {
         onChange({ ...settings, ...partial });
     };
 
-    return (
-        <div className="space-y-4">
-            {/* Row 1: Root + Mode */}
-            <div className="flex flex-wrap items-center gap-3">
-                {/* Root selector */}
-                <div className="flex items-center gap-2">
-                    <Music size={14} className="text-[#555]" />
-                    <span className="text-[11px] tracking-[2px] uppercase text-[#555]">Root</span>
-                    <div className="flex gap-1">
-                        {SHARP_NOTES.map(note => (
-                            <button
-                                key={note}
-                                onClick={() => update({ root: note })}
-                                className={`w-8 h-8 rounded-md text-xs font-bold transition-all ${settings.root === note
-                                    ? 'bg-white text-black'
-                                    : 'bg-[#1a1a1a] text-[#555] hover:bg-[#2a2a2a] hover:text-white border border-[#2a2a2a]'
-                                    }`}
-                            >
-                                {note}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            </div>
+    const [activeScaleCat, setActiveScaleCat] = React.useState(() => {
+        const found = SCALE_TYPES.find(s => s.name === settings.scaleName);
+        return found?.category || 'major_modes';
+    });
 
-            {/* Row 2: Mode selector */}
-            <div className="flex items-center gap-3">
-                <Layers size={14} className="text-[#555]" />
-                <span className="text-[11px] tracking-[2px] uppercase text-[#555]">Display</span>
-                <div className="flex gap-1 bg-[#1a1a1a] rounded-lg p-1 border border-[#2a2a2a]">
-                    {([
-                        { id: 'scale', label: 'Scale', icon: Grid3X3 },
-                        { id: 'chord', label: 'Chord Tones', icon: Guitar },
-                        { id: 'chord_scale', label: 'Chord + Scale', icon: Layers },
-                    ] as const).map(tab => {
-                        const Icon = tab.icon;
-                        return (
+    const [activeChordCat, setActiveChordCat] = React.useState(() => {
+        const found = CHORD_TYPES.find(c => c.symbol === settings.chordType);
+        return found?.category || 'seventh';
+    });
+
+    const scalesInCategory = SCALE_TYPES.filter(s => s.category === activeScaleCat);
+    const chordsInCategory = CHORD_TYPES.filter(c => c.category === activeChordCat);
+
+    const displayRoot = (() => {
+        const flatMap: Record<string, string> = { 'C#': 'Db', 'D#': 'Eb', 'G#': 'Ab', 'A#': 'Bb' };
+        return flatMap[settings.root] || settings.root;
+    })();
+
+    return (
+        <div className="space-y-6">
+            {/* ── Key + Scale/Chord Selection ── */}
+            <div className="flex items-start gap-8">
+                {/* Circle of Fifths */}
+                <CircleOfFifths
+                    selected={settings.root}
+                    onSelect={(key) => update({ root: COF_TO_SHARP[key] || key })}
+                    size={190}
+                />
+
+                {/* Right side */}
+                <div className="flex-1 min-w-0">
+                    {/* Mode selector — simplified labels */}
+                    <div className="flex gap-1 mb-5 bg-white/[0.02] rounded-xl p-1 w-fit border border-white/[0.04]">
+                        {([
+                            { id: 'scale' as const, label: 'Scales' },
+                            { id: 'chord' as const, label: 'Chord Tones' },
+                            { id: 'chord_scale' as const, label: 'Overlay' },
+                        ]).map(tab => (
                             <button
                                 key={tab.id}
                                 onClick={() => update({ mode: tab.id })}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${settings.mode === tab.id
-                                    ? 'bg-white text-black'
-                                    : 'text-[#555] hover:text-white'
-                                    }`}
+                                className={`px-4 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-200 cursor-pointer ${
+                                    settings.mode === tab.id
+                                        ? 'bg-white text-black'
+                                        : 'text-white/35 hover:text-white/60'
+                                }`}
                             >
-                                <Icon size={12} />
                                 {tab.label}
                             </button>
-                        );
-                    })}
+                        ))}
+                    </div>
+
+                    {/* Scale selection (when mode is scale or chord_scale) */}
+                    {(settings.mode === 'scale' || settings.mode === 'chord_scale') && (
+                        <div className="mb-4">
+                            <p className="text-[10px] tracking-[2px] uppercase text-white/25 mb-2">
+                                {settings.mode === 'chord_scale' ? 'Scale overlay' : 'Scale'}
+                            </p>
+                            {/* Category tabs */}
+                            <div className="flex gap-1 mb-3 flex-wrap">
+                                {SCALE_CATEGORIES.map(cat => {
+                                    const count = SCALE_TYPES.filter(s => s.category === cat.key).length;
+                                    if (count === 0) return null;
+                                    return (
+                                        <button
+                                            key={cat.key}
+                                            onClick={() => {
+                                                setActiveScaleCat(cat.key);
+                                                const first = SCALE_TYPES.find(s => s.category === cat.key);
+                                                if (first) update({ scaleName: first.name });
+                                            }}
+                                            className={`px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all duration-200 cursor-pointer ${
+                                                activeScaleCat === cat.key
+                                                    ? 'bg-white/[0.08] text-white'
+                                                    : 'text-white/30 hover:text-white/50 hover:bg-white/[0.03]'
+                                            }`}
+                                        >
+                                            {cat.label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            {/* Scale chips */}
+                            <AnimatePresence mode="wait">
+                                <motion.div
+                                    key={activeScaleCat}
+                                    initial={{ opacity: 0, y: 4 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -4 }}
+                                    transition={{ duration: 0.15 }}
+                                    className="flex flex-wrap gap-1.5"
+                                >
+                                    {scalesInCategory.map(scale => {
+                                        const isActive = settings.scaleName === scale.name;
+                                        return (
+                                            <button
+                                                key={scale.name}
+                                                onClick={() => update({ scaleName: scale.name })}
+                                                className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-200 cursor-pointer ${
+                                                    isActive
+                                                        ? 'text-[#080604]'
+                                                        : 'bg-white/[0.03] border border-white/[0.06] text-white/40 hover:text-white/70 hover:bg-white/[0.06]'
+                                                }`}
+                                                style={isActive ? {
+                                                    background: 'linear-gradient(135deg, #5b9bd5, #4a8ac4)',
+                                                    boxShadow: '0 0 12px rgba(91,155,213,0.15)',
+                                                    color: '#fff',
+                                                } : undefined}
+                                            >
+                                                {scale.displayName}
+                                            </button>
+                                        );
+                                    })}
+                                </motion.div>
+                            </AnimatePresence>
+                        </div>
+                    )}
+
+                    {/* Chord selection (when mode is chord or chord_scale) */}
+                    {(settings.mode === 'chord' || settings.mode === 'chord_scale') && (
+                        <div className="mb-4">
+                            <p className="text-[10px] tracking-[2px] uppercase text-white/25 mb-2">
+                                {settings.mode === 'chord_scale' ? 'Chord tones' : 'Chord'}
+                            </p>
+                            <div className="flex gap-1 mb-3 flex-wrap">
+                                {CHORD_CATEGORIES.map(cat => (
+                                    <button
+                                        key={cat.key}
+                                        onClick={() => {
+                                            setActiveChordCat(cat.key);
+                                            const first = CHORD_TYPES.find(c => c.category === cat.key);
+                                            if (first) update({ chordType: first.symbol });
+                                        }}
+                                        className={`px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all duration-200 cursor-pointer ${
+                                            activeChordCat === cat.key
+                                                ? 'bg-white/[0.08] text-white'
+                                                : 'text-white/30 hover:text-white/50 hover:bg-white/[0.03]'
+                                        }`}
+                                    >
+                                        {cat.label}
+                                    </button>
+                                ))}
+                            </div>
+                            <AnimatePresence mode="wait">
+                                <motion.div
+                                    key={activeChordCat}
+                                    initial={{ opacity: 0, y: 4 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -4 }}
+                                    transition={{ duration: 0.15 }}
+                                    className="flex flex-wrap gap-1.5"
+                                >
+                                    {chordsInCategory.map(chord => {
+                                        const isActive = settings.chordType === chord.symbol;
+                                        return (
+                                            <button
+                                                key={chord.symbol}
+                                                onClick={() => update({ chordType: chord.symbol })}
+                                                className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-200 cursor-pointer ${
+                                                    isActive
+                                                        ? ''
+                                                        : 'bg-white/[0.03] border border-white/[0.06] text-white/40 hover:text-white/70 hover:bg-white/[0.06]'
+                                                }`}
+                                                style={isActive ? {
+                                                    background: 'linear-gradient(135deg, #b8872e, #d4a44a)',
+                                                    boxShadow: '0 0 12px rgba(212,164,74,0.15)',
+                                                    color: '#080604',
+                                                } : undefined}
+                                            >
+                                                {displayRoot}{chord.symbol === 'maj' ? '' : chord.symbol}
+                                            </button>
+                                        );
+                                    })}
+                                </motion.div>
+                            </AnimatePresence>
+                        </div>
+                    )}
                 </div>
             </div>
 
-            {/* Row 3: Scale / Chord selector (depends on mode) */}
-            <div className="flex flex-wrap items-start gap-3">
-                {(settings.mode === 'scale' || settings.mode === 'chord_scale') && (
-                    <div className="flex items-center gap-2">
-                        <span className="text-[11px] tracking-[2px] uppercase text-[#555]">Scale</span>
-                        <select
-                            value={settings.scaleName}
-                            onChange={e => update({ scaleName: e.target.value })}
-                            className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-3 py-1.5 text-sm text-white focus:border-white/30 focus:outline-none transition-colors"
-                        >
-                            {SCALE_GROUPS.map(group => (
-                                <optgroup key={group.label} label={group.label}>
-                                    {group.scales.map(scale => (
-                                        <option key={scale.name} value={scale.name}>
-                                            {scale.displayName}
-                                        </option>
-                                    ))}
-                                </optgroup>
-                            ))}
-                        </select>
-                    </div>
-                )}
-
-                {(settings.mode === 'chord' || settings.mode === 'chord_scale') && (
-                    <div className="flex items-center gap-2">
-                        <span className="text-[11px] tracking-[2px] uppercase text-[#555]">Chord</span>
-                        <select
-                            value={settings.chordType}
-                            onChange={e => update({ chordType: e.target.value })}
-                            className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-3 py-1.5 text-sm text-white focus:border-white/30 focus:outline-none transition-colors"
-                        >
-                            {CHORD_GROUPS.map(group => (
-                                <optgroup key={group.label} label={group.label}>
-                                    {group.chords.map(chord => (
-                                        <option key={chord.symbol} value={chord.symbol}>
-                                            {settings.root}{chord.symbol === 'maj' ? '' : chord.symbol} — {chord.name}
-                                        </option>
-                                    ))}
-                                </optgroup>
-                            ))}
-                        </select>
-                    </div>
-                )}
-            </div>
-
-            {/* Row 4: Toggles */}
-            <div className="flex flex-wrap items-center gap-4">
-                {/* Interval toggle */}
+            {/* ── Toggles row ── */}
+            <div className="flex flex-wrap items-center gap-3">
                 <button
                     onClick={() => update({ showIntervals: !settings.showIntervals })}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${settings.showIntervals
-                        ? 'bg-white text-black border-white'
-                        : 'bg-[#1a1a1a] border-[#2a2a2a] text-[#555] hover:text-white hover:border-[#555]'
-                        }`}
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-medium border transition-all duration-200 cursor-pointer ${
+                        settings.showIntervals
+                            ? 'bg-white text-black border-white'
+                            : 'bg-white/[0.03] border-white/[0.06] text-white/40 hover:text-white/60 hover:border-white/[0.1]'
+                    }`}
                 >
                     <Hash size={12} />
                     {settings.showIntervals ? 'Intervals' : 'Note Names'}
                 </button>
 
-                {/* CAGED toggle */}
                 <button
                     onClick={() => update({ showCAGED: !settings.showCAGED })}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${settings.showCAGED
-                        ? 'bg-white text-black border-white'
-                        : 'bg-[#1a1a1a] border-[#2a2a2a] text-[#555] hover:text-white hover:border-[#555]'
-                        }`}
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-medium border transition-all duration-200 cursor-pointer ${
+                        settings.showCAGED
+                            ? 'bg-white text-black border-white'
+                            : 'bg-white/[0.03] border-white/[0.06] text-white/40 hover:text-white/60 hover:border-white/[0.1]'
+                    }`}
                 >
                     <Eye size={12} />
                     CAGED
                 </button>
 
-                {/* CAGED position selector (visible when CAGED is on) */}
                 {settings.showCAGED && (
                     <div className="flex gap-1">
                         {CAGED_NAMES.map((name, idx) => (
                             <button
                                 key={name}
                                 onClick={() => update({ cagedPosition: idx })}
-                                className={`w-8 h-8 rounded-md text-xs font-bold transition-all ${settings.cagedPosition === idx
-                                    ? 'bg-white text-black'
-                                    : 'bg-[#1a1a1a] text-[#555] hover:text-white border border-[#2a2a2a]'
-                                    }`}
+                                className={`w-8 h-8 rounded-lg text-[11px] font-bold transition-all duration-200 cursor-pointer ${
+                                    settings.cagedPosition === idx
+                                        ? 'bg-white text-black'
+                                        : 'bg-white/[0.03] text-white/30 hover:text-white/60 border border-white/[0.06]'
+                                }`}
                             >
                                 {name}
                             </button>

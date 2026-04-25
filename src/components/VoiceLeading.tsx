@@ -1,233 +1,519 @@
 /**
- * VoiceLeading.tsx — Voice leading pathway visualizer
- * Shows how notes move between chords in a progression
+ * VoiceLeading.tsx — Voice Leading Pathways
+ *
+ * Interactive voice leading visualization using the real voicing engine.
+ * No hardcoded MIDI maps — builds chords dynamically from music theory.
  */
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Play, Square, RotateCcw } from 'lucide-react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Play, Square, RotateCcw, ChevronRight, Repeat, Lightbulb, Lock } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import { playChord } from '../utils/audioEngine';
+import Fretboard from './Fretboard';
+import {
+    getVoiceLeadingPath, getGuidetoneLine, parseChordSymbol,
+    suggestNextChords, buildChord, noteToMidi,
+    type VoiceLeadingPath,
+} from '../musicTheory';
 
-interface VLChord {
-  label: string;
-  notes: string[];
-  midi: number[];
-}
+// ── Preset Progressions ──────────────────────────────────────────────────────
 
-interface Progression {
-  name: string;
-  key: string;
-  chords: VLChord[];
-}
-
-const PROGRESSIONS: Progression[] = [
-  {
-    name: 'ii-V-I Major', key: 'C Major',
-    chords: [
-      { label: 'Dm7', notes: ['C', 'A', 'F', 'D'], midi: [72, 69, 65, 62] },
-      { label: 'G7', notes: ['B', 'G', 'F', 'D'], midi: [71, 67, 65, 62] },
-      { label: 'Cmaj7', notes: ['B', 'G', 'E', 'C'], midi: [71, 67, 64, 60] },
-    ],
-  },
-  {
-    name: 'ii-V-I Minor', key: 'C Minor',
-    chords: [
-      { label: 'Dm7b5', notes: ['C', 'Ab', 'F', 'D'], midi: [72, 68, 65, 62] },
-      { label: 'G7alt', notes: ['B', 'Ab', 'F', 'Db'], midi: [71, 68, 65, 61] },
-      { label: 'Cm7', notes: ['Bb', 'G', 'Eb', 'C'], midi: [70, 67, 63, 60] },
-    ],
-  },
-  {
-    name: 'I-vi-ii-V', key: 'C Major',
-    chords: [
-      { label: 'Cmaj7', notes: ['B', 'G', 'E', 'C'], midi: [71, 67, 64, 60] },
-      { label: 'Am7', notes: ['C', 'A', 'E', 'C'], midi: [72, 69, 64, 60] },
-      { label: 'Dm7', notes: ['C', 'A', 'F', 'D'], midi: [72, 69, 65, 62] },
-      { label: 'G7', notes: ['B', 'G', 'F', 'D'], midi: [71, 67, 65, 62] },
-    ],
-  },
-  {
-    name: 'Blues', key: 'C Blues',
-    chords: [
-      { label: 'C7', notes: ['Bb', 'G', 'E', 'C'], midi: [70, 67, 64, 60] },
-      { label: 'F7', notes: ['A', 'F', 'Eb', 'C'], midi: [69, 65, 63, 60] },
-      { label: 'G7', notes: ['B', 'G', 'F', 'D'], midi: [71, 67, 65, 62] },
-    ],
-  },
+const PRESETS = [
+    { name: 'ii-V-I Major', key: 'C Major', chords: ['Dm7', 'G7', 'Cmaj7'] },
+    { name: 'ii-V-I Minor', key: 'C Minor', chords: ['Dm7b5', 'G7', 'Cm7'] },
+    { name: 'I-vi-ii-V', key: 'C Major', chords: ['Cmaj7', 'Am7', 'Dm7', 'G7'] },
+    { name: 'Blues', key: 'C Blues', chords: ['C7', 'F7', 'G7'] },
+    { name: 'Descending ii-Vs', key: 'Bb to Ab', chords: ['Cm7', 'F7', 'Bbmaj7', 'Bbm7', 'Eb7', 'Abmaj7'] },
+    { name: 'Turnaround', key: 'C Major', chords: ['Cmaj7', 'A7', 'Dm7', 'Db7'] },
 ];
 
-function midiToY(midi: number, min: number, max: number, h: number): number {
-  const range = max - min || 1;
-  return 30 + (h - 60) * (1 - (midi - min) / range);
+// ── Build MIDI from music theory (no hardcoded maps) ────────────────────────
+
+interface VLChord {
+    label: string;
+    notes: string[];
+    midi: number[];
 }
 
-export default function VoiceLeading() {
-  const [preset, setPreset] = useState(0);
-  const [active, setActive] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
-  const prog = PROGRESSIONS[preset];
-  const allMidi = prog.chords.flatMap(c => c.midi);
-  const minM = Math.min(...allMidi) - 2;
-  const maxM = Math.max(...allMidi) + 2;
-  const H = 280;
+function midiToNoteName(midi: number): string {
+    return NOTE_NAMES[midi % 12];
+}
 
-  useEffect(() => () => timers.current.forEach(clearTimeout), []);
-
-  const handlePlay = useCallback(() => {
-    if (playing) { timers.current.forEach(clearTimeout); setPlaying(false); return; }
-    setPlaying(true);
-    const ms = 1500;
-    prog.chords.forEach((c, i) => {
-      timers.current.push(setTimeout(() => { setActive(i); playChord(c.midi, 0.04, 2); }, i * ms));
+function buildVLChords(symbols: string[]): VLChord[] {
+    return symbols.map(symbol => {
+        try {
+            const { root, typeSymbol } = parseChordSymbol(symbol);
+            const intervals: Record<string, number[]> = {
+                'maj7': [0, 4, 7, 11], 'maj': [0, 4, 7], 'm7': [0, 3, 7, 10],
+                'm': [0, 3, 7], '7': [0, 4, 7, 10], 'm7b5': [0, 3, 6, 10],
+                'dim7': [0, 3, 6, 9], 'minmaj7': [0, 3, 7, 11], 'aug': [0, 4, 8],
+                'm6': [0, 3, 7, 9], '6': [0, 4, 7, 9], '9': [0, 4, 7, 10, 14],
+                'maj9': [0, 4, 7, 11, 14], 'm9': [0, 3, 7, 10, 14],
+                '7alt': [0, 4, 6, 10], 'sus4': [0, 5, 7], '7sus4': [0, 5, 7, 10],
+                'add9': [0, 4, 7, 14], 'aug7': [0, 4, 8, 10],
+            };
+            const intv = intervals[typeSymbol] || [0, 4, 7, 11];
+            const rootMidi = noteToMidi(root, 3);
+            // Voice in a comfortable mid-range (MIDI 48-72)
+            const midi = intv.map(i => {
+                let n = rootMidi + i;
+                while (n < 48) n += 12;
+                while (n > 72) n -= 12;
+                return n;
+            }).sort((a, b) => a - b);
+            return { label: symbol, notes: midi.map(midiToNoteName), midi };
+        } catch {
+            return { label: symbol, notes: [], midi: [] };
+        }
     });
-    timers.current.push(setTimeout(() => setPlaying(false), prog.chords.length * ms + 500));
-  }, [playing, prog]);
+}
 
-  const reset = () => { timers.current.forEach(clearTimeout); setPlaying(false); setActive(0); };
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-  return (
-    <div className="flex-1 p-8 lg:p-10 overflow-y-auto">
-      {/* Header */}
-      <div className="text-center mb-8">
-        <p className="font-mono text-[11px] tracking-[0.15em] uppercase text-text-muted mb-3">Progression Analysis</p>
-        <h1 className="text-4xl lg:text-5xl font-bold tracking-tight mb-3" style={{ letterSpacing: '-0.03em' }}>
-          Voice Leading <span style={{ fontWeight: 300, opacity: 0.25 }}>Pathways</span>
-        </h1>
-        <p style={{ color: '#999', maxWidth: 520, margin: '0 auto', lineHeight: 1.6, fontSize: '0.95rem' }}>
-          Visualize how individual notes transition smoothly between chords in standard progressions. Notice the minimal movement required.
-        </p>
-      </div>
+function midiToY(midi: number, min: number, max: number, h: number): number {
+    const range = max - min || 1;
+    return 24 + (h - 48) * (1 - (midi - min) / range);
+}
 
-      {/* Presets */}
-      <div className="flex justify-center gap-2 mb-8 flex-wrap">
-        {PROGRESSIONS.map((p, i) => (
-          <button key={p.name} onClick={() => { reset(); setPreset(i); }}
-            style={{
-              padding: '7px 18px', borderRadius: 999, fontSize: 13,
-              fontWeight: preset === i ? 600 : 400,
-              background: preset === i ? '#fff' : 'transparent',
-              color: preset === i ? '#0a0a0a' : '#888',
-              border: preset === i ? 'none' : '1px solid #2a2a2a',
-            }}>
-            {p.name}
-          </button>
-        ))}
-      </div>
+// ── Component ───────────────────────────────────────────────────────────────
 
-      {/* Visualization */}
-      <div className="card p-8 relative mx-auto" style={{ maxWidth: 900 }}>
-        {/* Transport */}
-        <div className="absolute top-5 right-5 flex gap-2">
-          <button onClick={handlePlay}
-            style={{ width: 42, height: 42, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: playing ? '#fff' : '#1c1c1c', color: playing ? '#0a0a0a' : '#fff', border: `1px solid ${playing ? '#fff' : '#333'}` }}>
-            {playing ? <Square size={14} /> : <Play size={14} style={{ marginLeft: 2 }} />}
-          </button>
-          <button onClick={reset}
-            style={{ width: 42, height: 42, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: '#1c1c1c', color: '#888', border: '1px solid #333' }}>
-            <RotateCcw size={14} />
-          </button>
-        </div>
+export default function VoiceLeading() {
+    const [presetIdx, setPresetIdx] = useState(0);
+    const [customInput, setCustomInput] = useState('');
+    const [useCustom, setUseCustom] = useState(false);
+    const [active, setActive] = useState(0);
+    const [playing, setPlaying] = useState(false);
+    const [looping, setLooping] = useState(false);
+    const [tempo, setTempo] = useState(80);
+    const [showSuggestions, setShowSuggestions] = useState(false);
+    const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
-        {/* Chord columns with SVG lines */}
-        <div style={{ position: 'relative', height: H + 50 }}>
-          {/* SVG lines */}
-          <svg style={{ position: 'absolute', inset: 0, width: '100%', height: H + 50, overflow: 'visible', pointerEvents: 'none' }}>
-            {prog.chords.map((chord, ci) => {
-              if (ci === 0) return null;
-              const prev = prog.chords[ci - 1];
-              const voices = Math.min(chord.midi.length, prev.midi.length);
-              const cols = prog.chords.length;
-              const px = ((ci - 1) / (cols - 1)) * 100;
-              const cx = (ci / (cols - 1)) * 100;
+    const { profile } = useAuth();
+    const isPro = profile?.subscription_tier === 'pro';
 
-              return Array.from({ length: voices }).map((_, vi) => {
-                const y1 = midiToY(prev.midi[vi], minM, maxM, H) + 25;
-                const y2 = midiToY(chord.midi[vi], minM, maxM, H) + 25;
-                const isCommon = prev.midi[vi] === chord.midi[vi];
-                return (
-                  <line key={`${ci}-${vi}`}
-                    x1={`${px}%`} y1={y1} x2={`${cx}%`} y2={y2}
-                    stroke={isCommon ? '#d4a44a' : '#555'}
-                    strokeWidth={isCommon ? 2 : 1}
-                    strokeDasharray={isCommon ? 'none' : '5 4'}
-                    opacity={(active >= ci - 1 && active <= ci) ? 0.8 : 0.2}
-                  />
-                );
-              });
-            })}
-          </svg>
+    const chordSymbols = useMemo(() => {
+        if (useCustom && customInput.trim()) {
+            return customInput.trim().split(/[\s,]+/).filter(Boolean);
+        }
+        return PRESETS[presetIdx]?.chords || [];
+    }, [useCustom, customInput, presetIdx]);
 
-          {/* Columns */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', position: 'relative', zIndex: 2, height: '100%' }}>
-            {prog.chords.map((chord, ci) => {
-              const isAct = ci === active;
-              return (
-                <div key={ci} onClick={() => { setActive(ci); playChord(chord.midi, 0.04, 2); }}
-                  style={{ flex: `0 0 ${100 / prog.chords.length}%`, textAlign: 'center', cursor: 'pointer',
-                    opacity: isAct ? 1 : 0.35, transition: 'opacity 0.3s' }}>
-                  <p style={{ fontWeight: 700, fontSize: isAct ? 18 : 15, marginBottom: 16, color: isAct ? '#fff' : '#888', transition: 'all 0.3s' }}>
-                    {chord.label}
-                  </p>
-                  <div style={{ position: 'relative', height: H }}>
-                    {chord.notes.map((note, ni) => {
-                      const y = midiToY(chord.midi[ni], minM, maxM, H);
-                      const isCommon = (ci > 0 && ni < prog.chords[ci - 1].midi.length && chord.midi[ni] === prog.chords[ci - 1].midi[ni]) ||
-                        (ci < prog.chords.length - 1 && ni < prog.chords[ci + 1].midi.length && chord.midi[ni] === prog.chords[ci + 1].midi[ni]);
-                      return (
-                        <div key={ni} style={{
-                          position: 'absolute', left: '50%', top: y, transform: 'translate(-50%, -50%)',
-                          width: isAct ? 42 : 34, height: isAct ? 42 : 34, borderRadius: '50%',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          background: isAct ? (isCommon ? '#d4a44a' : '#fff') : '#222',
-                          border: isAct ? 'none' : '1px solid #333',
-                          boxShadow: isAct && isCommon ? '0 0 16px rgba(212,164,74,0.3)' : 'none',
-                          transition: 'all 0.3s',
-                        }}>
-                          <span style={{ fontSize: isAct ? 13 : 11, fontWeight: 600, color: isAct ? '#0a0a0a' : '#888' }}>{note}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+    const currentKey = useMemo(() => {
+        if (useCustom) return 'Custom';
+        return PRESETS[presetIdx]?.key || '';
+    }, [useCustom, presetIdx]);
 
-        {/* Movement analysis */}
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 32, marginTop: 16, paddingTop: 16, borderTop: '1px solid #1e1e1e' }}>
-          {prog.chords.map((c, i) => {
+    const vlChords = useMemo(() => buildVLChords(chordSymbols), [chordSymbols]);
+
+    const vlPath = useMemo<VoiceLeadingPath | null>(() => {
+        try {
+            const path = getVoiceLeadingPath(chordSymbols);
+            return path.steps.length > 0 ? path : null;
+        } catch { return null; }
+    }, [chordSymbols]);
+
+    const guideTones = useMemo(() => {
+        try { return getGuidetoneLine(chordSymbols); }
+        catch { return []; }
+    }, [chordSymbols]);
+
+    const H = 260;
+    const allMidi = vlChords.flatMap(c => c.midi);
+    const minM = allMidi.length > 0 ? Math.min(...allMidi) - 2 : 58;
+    const maxM = allMidi.length > 0 ? Math.max(...allMidi) + 2 : 74;
+
+    useEffect(() => () => timers.current.forEach(clearTimeout), []);
+
+    const msPerBeat = (60 / tempo) * 1000 * 2;
+
+    const handlePlay = useCallback(() => {
+        if (playing) {
+            timers.current.forEach(clearTimeout);
+            timers.current = [];
+            setPlaying(false);
+            return;
+        }
+        setPlaying(true);
+        const playOnce = (offset = 0) => {
+            vlChords.forEach((c, i) => {
+                timers.current.push(setTimeout(() => {
+                    setActive(i);
+                    if (c.midi.length > 0) playChord(c.midi, 0.04, 2);
+                }, offset + i * msPerBeat));
+            });
+            return offset + vlChords.length * msPerBeat;
+        };
+        let endTime = playOnce();
+        if (looping) {
+            for (let rep = 1; rep < 4; rep++) endTime = playOnce(endTime);
+        }
+        timers.current.push(setTimeout(() => setPlaying(false), endTime + 500));
+    }, [playing, vlChords, msPerBeat, looping]);
+
+    const reset = useCallback(() => {
+        timers.current.forEach(clearTimeout);
+        timers.current = [];
+        setPlaying(false);
+        setActive(0);
+    }, []);
+
+    const selectPreset = useCallback((idx: number) => {
+        reset();
+        setPresetIdx(idx);
+        setUseCustom(false);
+    }, [reset]);
+
+    const submitCustom = useCallback(() => {
+        if (customInput.trim()) { reset(); setUseCustom(true); }
+    }, [customInput, reset]);
+
+    // Movement analysis
+    const movements = useMemo(() => {
+        return vlChords.map((chord, i) => {
             if (i === 0) return null;
-            const prev = prog.chords[i - 1];
-            const voices = Math.min(c.midi.length, prev.midi.length);
-            let common = 0, half = 0;
+            const prev = vlChords[i - 1];
+            const voices = Math.min(chord.midi.length, prev.midi.length);
+            let common = 0, step = 0, leap = 0, totalSemi = 0;
             for (let v = 0; v < voices; v++) {
-              const d = Math.abs(c.midi[v] - prev.midi[v]);
-              if (d === 0) common++;
-              if (d === 1) half++;
+                const d = Math.abs(chord.midi[v] - prev.midi[v]);
+                totalSemi += d;
+                if (d === 0) common++;
+                else if (d <= 2) step++;
+                else leap++;
             }
-            return (
-              <div key={i} style={{ textAlign: 'center' }}>
-                <p className="font-mono" style={{ fontSize: 10, letterSpacing: '0.1em', color: '#555', textTransform: 'uppercase' }}>{prev.label} → {c.label}</p>
-                <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
-                  {common > 0 && <span style={{ color: '#d4a44a' }}>{common} common</span>}
-                  {common > 0 && half > 0 && ' · '}
-                  {half > 0 && <span>{half} half-step</span>}
-                  {common === 0 && half === 0 && 'stepwise'}
-                </p>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+            return { common, step, leap, totalSemi, from: prev.label, to: chord.label };
+        });
+    }, [vlChords]);
 
-      {/* Key info */}
-      <p className="font-mono text-center mt-6" style={{ fontSize: 11, letterSpacing: '0.15em', color: '#3a3a3a', textTransform: 'uppercase' }}>
-        Key: {prog.key} &nbsp;•&nbsp; Voicing: Drop 2 &nbsp;•&nbsp; Tempo: 80 BPM
-      </p>
-    </div>
-  );
+    const totalMovement = movements.reduce((sum, m) => sum + (m?.totalSemi || 0), 0);
+    const totalCommon = movements.reduce((sum, m) => sum + (m?.common || 0), 0);
+
+    const suggestions = useMemo(() => {
+        if (!showSuggestions || !vlPath?.steps.length) return [];
+        const lastStep = vlPath.steps[vlPath.steps.length - 1];
+        try { return suggestNextChords(lastStep.chord, lastStep.positions).slice(0, 5); }
+        catch { return []; }
+    }, [showSuggestions, vlPath]);
+
+    return (
+        <div className="flex-1 overflow-y-auto">
+            <div className="max-w-[1000px] mx-auto px-6 lg:px-10 py-8">
+
+                {/* ── Header ── */}
+                <div className="mb-8">
+                    <p className="font-mono text-[11px] tracking-[0.15em] uppercase text-text-muted mb-2">Progression Analysis</p>
+                    <h1 className="text-3xl lg:text-4xl font-bold tracking-tight mb-3" style={{ letterSpacing: '-0.03em' }}>
+                        Voice Leading <span className="font-light text-text-faint">Pathways</span>
+                    </h1>
+                    <p className="text-text-secondary text-[0.9rem] leading-relaxed" style={{ maxWidth: 520 }}>
+                        Visualize voice movement, trace guide tones, and explore voicings on the fretboard.
+                    </p>
+                </div>
+
+                {/* ── Preset row ── */}
+                <div className="flex flex-wrap gap-1.5 mb-4">
+                    {PRESETS.map((p, i) => (
+                        <button key={p.name} onClick={() => selectPreset(i)}
+                            className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
+                                !useCustom && presetIdx === i
+                                    ? 'bg-accent text-bg font-semibold'
+                                    : 'text-text-secondary border border-border hover:text-text hover:border-border'
+                            }`}>
+                            {p.name}
+                        </button>
+                    ))}
+                </div>
+
+                {/* ── Custom input ── */}
+                <div className="relative mb-8">
+                    {!isPro && (
+                        <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-bg/80 backdrop-blur-sm border border-border-subtle">
+                            <Link to="/pricing" className="text-xs font-semibold text-accent flex items-center gap-1.5 hover:text-accent-bright transition-colors">
+                                <Lock size={12} /> Upgrade to Pro for Custom Progressions <ChevronRight size={14} />
+                            </Link>
+                        </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="text"
+                            value={customInput}
+                            onChange={e => setCustomInput(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && submitCustom()}
+                            placeholder="Custom: Dm7 G7 Cmaj7 Am7..."
+                            disabled={!isPro}
+                            className="flex-1 bg-surface border border-border rounded-xl px-4 py-2.5 text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-accent/50 transition-colors"
+                        />
+                        <button onClick={submitCustom} disabled={!isPro}
+                            className={`px-5 py-2.5 rounded-xl text-[13px] font-semibold transition-all ${
+                                isPro ? 'bg-accent text-bg hover:brightness-110' : 'bg-elevated text-text-muted cursor-not-allowed'
+                            }`}>
+                            Analyze
+                        </button>
+                    </div>
+                </div>
+
+                {/* ── Voice Path Visualization ── */}
+                {vlChords.length > 0 && vlChords[0].midi.length > 0 && (
+                    <div className="card p-6 mb-5">
+                        {/* Transport */}
+                        <div className="flex items-center justify-between mb-5">
+                            <div className="flex items-center gap-2">
+                                <button onClick={handlePlay}
+                                    className={`w-9 h-9 rounded-full flex items-center justify-center border transition-all ${
+                                        playing ? 'bg-accent text-bg border-accent' : 'bg-elevated text-text border-border hover:bg-card'
+                                    }`}>
+                                    {playing ? <Square size={13} /> : <Play size={13} className="ml-0.5" />}
+                                </button>
+                                <button onClick={reset}
+                                    className="w-9 h-9 rounded-full flex items-center justify-center bg-elevated text-text-secondary border border-border hover:text-text transition-colors">
+                                    <RotateCcw size={13} />
+                                </button>
+                                <button onClick={() => setLooping(l => !l)}
+                                    className={`w-9 h-9 rounded-full flex items-center justify-center border transition-all ${
+                                        looping ? 'bg-accent/15 text-accent border-accent/40' : 'bg-elevated text-text-secondary border-border hover:text-text'
+                                    }`}>
+                                    <Repeat size={13} />
+                                </button>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Tempo</span>
+                                <input type="range" min={40} max={160} value={tempo}
+                                    onChange={e => setTempo(Number(e.target.value))}
+                                    className="w-20 accent-accent" />
+                                <span className="font-mono text-xs text-text-secondary w-12">{tempo} bpm</span>
+                            </div>
+                        </div>
+
+                        {/* SVG Voice Paths */}
+                        <div className="relative" style={{ height: H + 50 }}>
+                            <svg className="absolute inset-0 w-full overflow-visible pointer-events-none" style={{ height: H + 50 }}>
+                                {vlChords.map((chord, ci) => {
+                                    if (ci === 0) return null;
+                                    const prev = vlChords[ci - 1];
+                                    const voices = Math.min(chord.midi.length, prev.midi.length);
+                                    const cols = vlChords.length;
+                                    const px = ((ci - 1) / (cols - 1)) * 100;
+                                    const cx = (ci / (cols - 1)) * 100;
+
+                                    return Array.from({ length: voices }).map((_, vi) => {
+                                        const y1 = midiToY(prev.midi[vi], minM, maxM, H) + 25;
+                                        const y2 = midiToY(chord.midi[vi], minM, maxM, H) + 25;
+                                        const isCommon = prev.midi[vi] === chord.midi[vi];
+                                        const isStep = Math.abs(prev.midi[vi] - chord.midi[vi]) <= 2;
+                                        const isActive = active >= ci - 1 && active <= ci;
+
+                                        return (
+                                            <line key={`${ci}-${vi}`}
+                                                x1={`${px}%`} y1={y1} x2={`${cx}%`} y2={y2}
+                                                stroke={isCommon ? '#d4a44a' : isStep ? '#5b9bd5' : '#4a4a4a'}
+                                                strokeWidth={isCommon ? 2.5 : isStep ? 1.5 : 1}
+                                                strokeDasharray={isCommon ? 'none' : isStep ? 'none' : '5 4'}
+                                                opacity={isActive ? 0.9 : 0.15}
+                                                style={{ transition: 'opacity 0.3s' }}
+                                            />
+                                        );
+                                    });
+                                })}
+                            </svg>
+
+                            {/* Chord columns */}
+                            <div className="flex justify-between relative z-[2] h-full">
+                                {vlChords.map((chord, ci) => {
+                                    const isAct = ci === active;
+                                    return (
+                                        <div key={ci}
+                                            onClick={() => { setActive(ci); if (chord.midi.length > 0) playChord(chord.midi, 0.04, 2); }}
+                                            className="text-center cursor-pointer transition-opacity duration-300"
+                                            style={{ flex: `0 0 ${100 / vlChords.length}%`, opacity: isAct ? 1 : 0.3 }}>
+                                            <p className={`font-bold mb-3 transition-all duration-300 ${isAct ? 'text-[17px] text-text' : 'text-sm text-text-secondary'}`}>
+                                                {chord.label}
+                                            </p>
+                                            <div className="relative" style={{ height: H }}>
+                                                {chord.notes.map((note, ni) => {
+                                                    const y = midiToY(chord.midi[ni], minM, maxM, H);
+                                                    const isCommon = (ci > 0 && ni < vlChords[ci - 1].midi.length && chord.midi[ni] === vlChords[ci - 1].midi[ni]) ||
+                                                        (ci < vlChords.length - 1 && ni < vlChords[ci + 1].midi.length && chord.midi[ni] === vlChords[ci + 1].midi[ni]);
+                                                    const gt = guideTones[ci];
+                                                    const isGuideTone = gt && (note === gt.third.note || note === gt.seventh.note);
+
+                                                    return (
+                                                        <div key={ni}
+                                                            className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full flex items-center justify-center transition-all duration-300"
+                                                            style={{
+                                                                top: y,
+                                                                width: isAct ? 36 : 28,
+                                                                height: isAct ? 36 : 28,
+                                                                background: isAct
+                                                                    ? (isCommon ? 'var(--color-accent)' : isGuideTone ? '#5b9bd5' : 'var(--color-text)')
+                                                                    : 'var(--color-elevated)',
+                                                                border: isAct
+                                                                    ? (isGuideTone ? '2px solid #5b9bd5' : 'none')
+                                                                    : '1px solid var(--color-border)',
+                                                                boxShadow: isAct && isCommon ? 'var(--shadow-glow)' : isAct && isGuideTone ? '0 0 12px rgba(91,155,213,0.25)' : 'none',
+                                                            }}>
+                                                            <span className={`font-semibold ${isAct ? 'text-[12px] text-bg' : 'text-[10px] text-text-secondary'}`}>{note}</span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Motion analysis strip */}
+                        <div className="flex justify-center gap-6 mt-4 pt-3 border-t border-border-subtle flex-wrap">
+                            {movements.map((m, i) => {
+                                if (!m) return null;
+                                return (
+                                    <div key={i} className="text-center">
+                                        <p className="font-mono text-[10px] tracking-wider text-text-muted uppercase">{m.from} → {m.to}</p>
+                                        <p className="text-xs text-text-secondary mt-1 flex gap-1.5 justify-center">
+                                            {m.common > 0 && <span className="text-accent">{m.common} common</span>}
+                                            {m.step > 0 && <span style={{ color: '#5b9bd5' }}>{m.step} step</span>}
+                                            {m.leap > 0 && <span className="text-text-muted">{m.leap} leap</span>}
+                                        </p>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                {/* ── Guide Tone Line ── */}
+                {guideTones.length > 0 && (
+                    <div className="card p-5 mb-5">
+                        <p className="font-mono text-[10px] tracking-[0.15em] uppercase text-text-muted mb-4">
+                            Guide Tone Line <span style={{ color: '#5b9bd5' }}>●</span> 3rds & 7ths
+                        </p>
+                        <div className="space-y-2">
+                            {['third', 'seventh'].map((voice) => (
+                                <div key={voice} className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-mono text-[10px] text-text-muted w-10">{voice === 'third' ? '3rd:' : '7th:'}</span>
+                                    {guideTones.map((gt, i) => {
+                                        const tone = voice === 'third' ? gt.third : gt.seventh;
+                                        return (
+                                            <React.Fragment key={`${voice}-${i}`}>
+                                                <span
+                                                    onClick={() => { setActive(i); if (vlChords[i]?.midi.length > 0) playChord(vlChords[i].midi, 0.04, 2); }}
+                                                    className={`cursor-pointer px-2.5 py-1 rounded-lg text-sm font-bold font-mono transition-all ${
+                                                        active === i
+                                                            ? 'bg-info/15 text-info border border-info/30'
+                                                            : 'text-text-secondary border border-transparent'
+                                                    }`}
+                                                    style={{ color: active === i ? '#5b9bd5' : undefined }}>
+                                                    {tone.note || '—'}
+                                                    <span className="text-[9px] opacity-50 ml-1">({tone.intervalLabel})</span>
+                                                </span>
+                                                {i < guideTones.length - 1 && <span className="text-text-faint text-[10px]">→</span>}
+                                            </React.Fragment>
+                                        );
+                                    })}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* ── Stats + Fretboard ── */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
+                    {/* Stats panel */}
+                    <div className="card p-5 space-y-4">
+                        <p className="font-mono text-[10px] tracking-[0.15em] uppercase text-text-muted">Analysis</p>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="p-3 rounded-lg bg-surface">
+                                <p className="font-mono text-[9px] text-text-muted uppercase">Movement</p>
+                                <p className={`text-2xl font-bold ${
+                                    totalMovement <= 6 ? 'text-success' : totalMovement <= 12 ? 'text-accent' : 'text-error'
+                                }`}>{totalMovement}</p>
+                                <p className="font-mono text-[9px] text-text-muted">semitones</p>
+                            </div>
+                            <div className="p-3 rounded-lg bg-surface">
+                                <p className="font-mono text-[9px] text-text-muted uppercase">Common</p>
+                                <p className="text-2xl font-bold text-accent">{totalCommon}</p>
+                                <p className="font-mono text-[9px] text-text-muted">held tones</p>
+                            </div>
+                        </div>
+
+                        <div className="p-3 rounded-lg bg-surface">
+                            <p className="font-mono text-[9px] text-text-muted uppercase mb-1">Quality</p>
+                            <p className={`text-lg font-bold ${
+                                totalMovement <= 6 ? 'text-success' : totalMovement <= 12 ? 'text-accent' : 'text-error'
+                            }`}>
+                                {totalMovement <= 6 ? 'Excellent' : totalMovement <= 12 ? 'Good' : 'Fair'}
+                            </p>
+                            <p className="text-xs text-text-muted mt-1">
+                                {totalMovement <= 6 ? 'Minimal motion — smooth voice leading' :
+                                 totalMovement <= 12 ? 'Some step motion, well connected' :
+                                 'Consider different inversions to reduce movement'}
+                            </p>
+                        </div>
+
+                        {/* Suggestions */}
+                        <button
+                            onClick={() => setShowSuggestions(s => !s)}
+                            className={`w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-xs font-medium transition-all border ${
+                                showSuggestions
+                                    ? 'bg-accent/10 text-accent border-accent/30'
+                                    : 'bg-surface text-text-secondary border-border-subtle hover:text-text'
+                            }`}>
+                            <Lightbulb size={13} /> {showSuggestions ? 'Hide' : 'Suggest Next Chord'}
+                        </button>
+
+                        <AnimatePresence>
+                            {showSuggestions && suggestions.length > 0 && (
+                                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                                    className="space-y-1.5 overflow-hidden">
+                                    {suggestions.map((s, i) => (
+                                        <button key={i}
+                                            onClick={() => {
+                                                const newSymbols = [...chordSymbols, s.chord].join(' ');
+                                                setCustomInput(newSymbols);
+                                                setUseCustom(true);
+                                                setShowSuggestions(false);
+                                            }}
+                                            className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-left transition-all bg-surface border border-border-subtle hover:bg-elevated">
+                                            <span className="text-sm font-bold text-text">{s.chord}</span>
+                                            <span className="font-mono text-[10px] text-text-muted">
+                                                {s.commonTones.length} common · {s.movement} mvmt
+                                            </span>
+                                        </button>
+                                    ))}
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+                    </div>
+
+                    {/* Fretboard panel */}
+                    <div className="card p-5 lg:col-span-2">
+                        <p className="font-mono text-[10px] tracking-[0.15em] uppercase text-text-muted mb-3">
+                            Fretboard — {vlChords[active]?.label || ''} {vlPath?.steps[active] ? `(${vlPath.steps[active].voicing.voicingType.replace('_', ' ')})` : ''}
+                        </p>
+                        {vlPath?.steps[active] ? (
+                            <AnimatePresence mode="wait">
+                                <motion.div key={active} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.2 }}>
+                                    <Fretboard activeNotes={vlPath.steps[active].positions} showIntervals clickToPlay />
+                                </motion.div>
+                            </AnimatePresence>
+                        ) : (
+                            <div className="flex items-center justify-center h-40 text-sm text-text-muted">
+                                {chordSymbols.length === 0 ? 'Enter a chord progression above' : 'No voicings found — try standard symbols (Dm7, G7, Cmaj7)'}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Footer */}
+                <p className="font-mono text-center text-[11px] tracking-[0.15em] text-text-faint uppercase">
+                    Key: {currentKey} · Voicing: Drop 2 · Tempo: {tempo} BPM
+                </p>
+            </div>
+        </div>
+    );
 }

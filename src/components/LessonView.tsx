@@ -10,7 +10,7 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, ArrowRight, Check, BookOpen, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getLesson, type LessonStep } from '../data/curriculum';
+import { getLesson, getModule, type LessonStep } from '../data/curriculum';
 import { useAppStore } from '../store/useAppStore';
 import { useAuth } from '../contexts/AuthContext';
 import Fretboard from './Fretboard';
@@ -21,6 +21,7 @@ import {
     ScaleOverlayExplorer,
     IIVITrainer,
     VoicingBrowser,
+    VoiceLeadingExplorer,
 } from './LessonExercises';
 import {
     getScalePositions, getChordPositions, getChordScaleOverlay,
@@ -189,6 +190,13 @@ function ExerciseStep({ step, onProgress }: { step: LessonStep; onProgress?: (va
                         onProgress={onProgress}
                     />
                 )}
+                {config.type === 'voice_leading_explorer' && (
+                    <VoiceLeadingExplorer
+                        mode={config.mode || 'guide_tones'}
+                        requiredProgressions={config.requiredProgressions || 3}
+                        onProgress={onProgress}
+                    />
+                )}
             </div>
         </div>
     );
@@ -306,8 +314,11 @@ export default function LessonView() {
     const [completed, setCompleted] = useState(false);
 
     // Protection logic
-    if (lesson && lesson.moduleId > 1 && profile?.subscription_tier !== 'pro') {
-        return <Navigate to="/pricing" replace />;
+    if (lesson && lesson.moduleId > 1) {
+        const mod = getModule(lesson.moduleId);
+        if (mod?.subtitle.includes('Pro') && profile?.subscription_tier !== 'pro') {
+            return <Navigate to="/pricing" replace />;
+        }
     }
 
     if (!lesson) {
@@ -365,7 +376,7 @@ export default function LessonView() {
                     transition={{ delay: 0.4 }}
                     className="flex gap-3"
                 >
-                    {lesson.lessonIndex < 4 && (
+                    {(() => { const mod = getModule(lesson.moduleId); return mod && lesson.lessonIndex < mod.lessons.length - 1; })() && (
                         <button
                             onClick={() => {
                                 setCurrentStep(0);

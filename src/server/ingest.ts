@@ -20,7 +20,7 @@ const KNOWLEDGE_DIR = path.resolve(process.cwd(), 'knowledge');
 const CHUNK_SIZE = 1500;       // ~500 tokens ≈ 1500 characters
 const CHUNK_OVERLAP = 200;     // overlap for context continuity
 const EMBEDDING_BATCH = 20;    // Gemini embedContent calls per batch
-const EMBEDDING_MODEL = 'gemini-embedding-001';
+const EMBEDDING_MODEL = 'text-embedding-004';
 
 // ── Text Extraction ──────────────────────────────────────────────────────────
 
@@ -100,7 +100,14 @@ function chunkText(text: string): TextChunk[] {
             index++;
         }
 
+        const prevStart = start;
         start = end - CHUNK_OVERLAP;
+        
+        // Guarantee forward progress to prevent infinite loops causing OOM
+        if (start <= prevStart) {
+            start = prevStart + Math.max(1, CHUNK_SIZE - CHUNK_OVERLAP);
+        }
+        
         if (start >= cleaned.length) break;
     }
 
@@ -191,7 +198,7 @@ async function main() {
         console.log(`${chunks.length} chunks`);
 
         // Clear old data for this file (re-ingestion)
-        clearSource(file);
+        await clearSource(file);
 
         // Embed
         process.stdout.write(`  Embedding ${chunks.length} chunks... `);
@@ -200,7 +207,7 @@ async function main() {
 
         // Store
         process.stdout.write('  Storing in database... ');
-        storeChunksBatch(
+        await storeChunksBatch(
             chunks.map((chunk, i) => ({
                 text: chunk.text,
                 embedding: embeddings[i],
@@ -214,7 +221,7 @@ async function main() {
     }
 
     // 4. Summary
-    const status = getStatus();
+    const status = await getStatus();
     console.log('════════════════════════════════════════════');
     console.log(`✓ Ingestion complete!`);
     console.log(`  Total chunks in knowledge base: ${status.totalChunks}`);

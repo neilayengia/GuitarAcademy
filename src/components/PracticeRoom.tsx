@@ -12,10 +12,21 @@ import {
   PlusCircle,
   Minus,
   GripHorizontal,
+  Shuffle,
 } from "lucide-react";
 import Fretboard from "./Fretboard";
 import { getChordScaleOverlay } from "../musicTheory/fretboardMapping";
+import { noteToMidi } from "../musicTheory/notes";
 import { getChordAudioPath, getScaleOptionsForQuality, type ChordQuality } from "../utils/chordAudioMap";
+import { generateProgression, STYLE_OPTIONS } from "../musicTheory/progressionGenerator";
+import {
+  createAudioSequencePlayer,
+  playChord,
+  preloadAudioEngine,
+  unlockAudioEngine,
+  type AudioSequenceController,
+  type AudioSequenceStep,
+} from "../utils/audioEngine";
 
 const ROOTS = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
 const QUALITIES: ChordQuality[] = ["Maj7", "min7", "7", "min7b5", "7b913", "7b9b13"];
@@ -27,6 +38,15 @@ const QUALITY_TO_SYMBOL: Record<ChordQuality, string> = {
   "min7b5": "m7b5",
   "7b913": "13b9",
   "7b9b13": "7alt"
+};
+
+const QUALITY_TO_INTERVALS: Record<ChordQuality, number[]> = {
+  "Maj7": [0, 4, 7, 11],
+  "min7": [0, 3, 7, 10],
+  "7": [0, 4, 7, 10],
+  "min7b5": [0, 3, 6, 10],
+  "7b913": [0, 4, 10, 13, 21],
+  "7b9b13": [0, 4, 10, 13, 20],
 };
 
 // ── Custom Hook: Pitch Detection ─────────────────────────────────────────────
@@ -144,6 +164,20 @@ export default function PracticeRoom() {
   type Slot = { root: string; quality: ChordQuality } | null;
   const [slots, setSlots] = useState<Slot[]>([null, null, null, null]);
   const [draggedChord, setDraggedChord] = useState<{ root: string; quality: ChordQuality } | null>(null);
+  const [dropTargetIdx, setDropTargetIdx] = useState<number | null>(null);
+
+  // Generator state
+  const [genStyle, setGenStyle] = useState<'jazz' | 'blues' | 'pop' | 'modal'>('jazz');
+
+  const handleGenerate = () => {
+    unlockAudioEngine();
+    preloadAudioEngine().catch(() => {});
+    const progression = generateProgression(genStyle);
+    setSlots(progression);
+    setIsPlaying(false);
+    setActiveSlotIdx(0);
+    setAudioProgress(0);
+  };
 
   // Playback & Scale Selection State
   const [isPlaying, setIsPlaying] = useState(false);
@@ -152,52 +186,31 @@ export default function PracticeRoom() {
   const [audioProgress, setAudioProgress] = useState(0);
   const [selectedScaleOverride, setSelectedScaleOverride] = useState<string | null>(null);
 
-  const seqAudioRefs = useRef<(HTMLAudioElement | null)[]>([null, null, null, null]);
+  const sequenceRef = useRef<AudioSequenceController | null>(null);
+  const sequenceRunRef = useRef(0);
   const pitchDetection = usePitchDetection();
 
-  // Load sources when slots change
   useEffect(() => {
-    slots.forEach((slot, i) => {
-      const el = seqAudioRefs.current[i];
-      if (el && slot && !el.src.includes(getChordAudioPath(slot.root, slot.quality))) {
-        el.src = getChordAudioPath(slot.root, slot.quality);
-        el.load();
-      } else if (el && !slot) {
-        el.removeAttribute('src');
-      }
-    });
-
     if (isPlaying && !slots[activeSlotIdx]) {
       skipToNextValidSlot(activeSlotIdx);
     }
   }, [slots, isPlaying, activeSlotIdx]);
 
+  useEffect(() => {
+    sequenceRef.current?.setVolume(isMuted ? 0 : volume / 100);
+  }, [isMuted, volume]);
+
+  useEffect(() => {
+    return () => {
+      sequenceRef.current?.stop(0.02);
+      sequenceRef.current = null;
+    };
+  }, []);
+
   // Reset scale override when the chord slot changes
   useEffect(() => {
     setSelectedScaleOverride(null);
   }, [activeSlotIdx]);
-
-  // Handle Play/Pause logic
-  useEffect(() => {
-    const el = seqAudioRefs.current[activeSlotIdx];
-
-    seqAudioRefs.current.forEach((audio, i) => {
-      if (audio && i !== activeSlotIdx) {
-        audio.pause();
-        audio.currentTime = 0;
-      }
-    });
-
-    if (isPlaying && slots[activeSlotIdx] && el) {
-      el.volume = isMuted ? 0 : volume / 100;
-      el.play().catch(e => {
-        console.warn("Autoplay blocked or playback failed:", e);
-        setIsPlaying(false);
-      });
-    } else if (!isPlaying && el) {
-      el.pause();
-    }
-  }, [isPlaying, activeSlotIdx, slots, volume, isMuted]);
 
   const skipToNextValidSlot = (currentIdx: number) => {
     let nextIdx = currentIdx + 1;
@@ -216,8 +229,12 @@ export default function PracticeRoom() {
       }
 
       if (slots[nextIdx]) {
-        setActiveSlotIdx(nextIdx);
-        setAudioProgress(0);
+        if (isPlaying) {
+          playFromSlot(nextIdx);
+        } else {
+          setActiveSlotIdx(nextIdx);
+          setAudioProgress(0);
+        }
         found = true;
         break;
       }
@@ -231,45 +248,127 @@ export default function PracticeRoom() {
     }
   };
 
-  const handleAudioEnded = () => {
-    skipToNextValidSlot(activeSlotIdx);
-  };
-
   const skipBack = () => {
     let prevIdx = activeSlotIdx - 1;
     for (let i = 0; i < 4; i++) {
       if (prevIdx < 0) prevIdx = 3;
       if (slots[prevIdx]) {
-        setActiveSlotIdx(prevIdx);
-        setAudioProgress(0);
+        if (isPlaying) {
+          playFromSlot(prevIdx);
+        } else {
+          setActiveSlotIdx(prevIdx);
+          setAudioProgress(0);
+        }
         return;
       }
       prevIdx--;
     }
   };
 
+  const buildSequenceSteps = useCallback((startIdx: number): AudioSequenceStep[] => {
+    const steps: AudioSequenceStep[] = [];
+    const slotsToVisit = loopEnabled
+      ? Array.from({ length: 4 }, (_, offset) => (startIdx + offset) % 4)
+      : Array.from({ length: 4 - startIdx }, (_, offset) => startIdx + offset);
+
+    slotsToVisit.forEach((slotIdx) => {
+      const slot = slots[slotIdx];
+      if (!slot) return;
+      steps.push({
+        id: String(slotIdx),
+        url: getChordAudioPath(slot.root, slot.quality),
+      });
+    });
+
+    return steps;
+  }, [loopEnabled, slots]);
+
+  const playFromSlot = useCallback(async (slotIdx: number) => {
+    const targetSlot = slots[slotIdx];
+    if (!targetSlot) return;
+
+    unlockAudioEngine();
+    const runId = sequenceRunRef.current + 1;
+    sequenceRunRef.current = runId;
+    sequenceRef.current?.stop(0.02);
+    sequenceRef.current = null;
+    setIsPlaying(true);
+    setActiveSlotIdx(slotIdx);
+    setAudioProgress(0);
+
+    const steps = buildSequenceSteps(slotIdx);
+    if (steps.length === 0) {
+      setIsPlaying(false);
+      return;
+    }
+
+    try {
+      sequenceRef.current = await createAudioSequencePlayer(steps, {
+        loop: loopEnabled,
+        volume: isMuted ? 0 : volume / 100,
+        onStepStart: (_stepIndex, step) => {
+          if (sequenceRunRef.current !== runId) return;
+          setActiveSlotIdx(Number(step.id));
+          setAudioProgress(0);
+        },
+        onProgress: (_stepIndex, progress) => {
+          if (sequenceRunRef.current !== runId) return;
+          setAudioProgress(progress * 100);
+        },
+        onEnded: () => {
+          if (sequenceRunRef.current !== runId) return;
+          setIsPlaying(false);
+          setAudioProgress(0);
+        },
+        onError: (error) => {
+          console.warn("Sequence playback failed:", error);
+        },
+      });
+    } catch (error) {
+      if (sequenceRunRef.current !== runId) return;
+      console.warn("Sequence playback failed:", error);
+      setIsPlaying(false);
+      setAudioProgress(0);
+    }
+  }, [buildSequenceSteps, isMuted, loopEnabled, slots, volume]);
+
   const togglePlay = () => {
     if (!isPlaying && !slots.some(s => s !== null)) return; // Prevents play if all empty
+    unlockAudioEngine();
+    preloadAudioEngine().catch(() => {});
+
+    if (isPlaying) {
+      sequenceRunRef.current += 1;
+      sequenceRef.current?.stop(0.03);
+      sequenceRef.current = null;
+      setIsPlaying(false);
+      return;
+    }
 
     if (!isPlaying && !slots[activeSlotIdx]) {
       // Find first valid slot if current is empty
       const firstValid = slots.findIndex(s => s !== null);
-      if (firstValid !== -1) setActiveSlotIdx(firstValid);
+      if (firstValid !== -1) {
+        playFromSlot(firstValid);
+        return;
+      }
     }
 
-    setIsPlaying(!isPlaying);
+    playFromSlot(activeSlotIdx);
   };
 
   const handleDragStart = (e: React.DragEvent, root: string, quality: ChordQuality) => {
     setDraggedChord({ root, quality });
+    previewChord(root, quality);
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = "copy";
       e.dataTransfer.setData("application/json", JSON.stringify({ root, quality }));
     }
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
+  const handleDragOver = (e: React.DragEvent, index: number) => {
     e.preventDefault(); // allow drop
+    setDropTargetIdx(index);
     if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
   };
 
@@ -279,8 +378,37 @@ export default function PracticeRoom() {
       const newSlots = [...slots];
       newSlots[index] = draggedChord;
       setSlots(newSlots);
+      setActiveSlotIdx(index);
+      setAudioProgress(0);
+      previewChord(draggedChord.root, draggedChord.quality);
+      if (isPlaying) {
+        setTimeout(() => playFromSlot(index), 0);
+      }
     }
+    setDraggedChord(null);
+    setDropTargetIdx(null);
   };
+
+  const previewChord = useCallback((root: string, quality: ChordQuality) => {
+    const rootMidi = noteToMidi(root, 3);
+    const midiNotes = QUALITY_TO_INTERVALS[quality].map(interval => rootMidi + interval);
+    playChord(midiNotes, 0.025, 1.35);
+  }, []);
+
+  const addChordFromLibrary = useCallback((root: string, quality: ChordQuality) => {
+    unlockAudioEngine();
+    preloadAudioEngine().catch(() => {});
+    previewChord(root, quality);
+    setSlots(prev => {
+      const next = [...prev];
+      const targetIdx = next.findIndex(slot => slot === null);
+      const idx = targetIdx === -1 ? activeSlotIdx : targetIdx;
+      next[idx] = { root, quality };
+      setActiveSlotIdx(idx);
+      setAudioProgress(0);
+      return next;
+    });
+  }, [activeSlotIdx, previewChord]);
 
   // Resolve Scale Data for Fretboard
   const currentSlot = slots[activeSlotIdx];
@@ -328,21 +456,47 @@ export default function PracticeRoom() {
   }, [validScales, activeScaleIndex]);
 
   return (
-    <div className="flex-1 p-8 flex flex-col h-full overflow-hidden bg-[#0f0f0f]">
+    <div className="flex-1 p-8 flex flex-col h-full overflow-hidden bg-bg">
       <header className="mb-8 flex justify-between items-end">
         <div>
-          <p className="text-[11px] tracking-[2px] uppercase text-[#555] mb-2">Practice Session</p>
-          <h2 className="text-3xl font-bold tracking-tight text-white">
+          <p className="text-[11px] tracking-[2px] uppercase text-text-muted mb-2">Practice Session</p>
+          <h2 className="text-3xl font-bold tracking-tight text-text">
             Focus <span className="font-light opacity-30">Mode</span>
           </h2>
         </div>
 
-        <div className="flex gap-4 flex-wrap">
+        <div className="flex gap-3 flex-wrap items-center">
+          {/* ── Progression Generator ── */}
+          <div className="flex items-center gap-1 bg-elevated border border-border-subtle rounded-full p-1">
+            {STYLE_OPTIONS.map(opt => (
+              <button
+                key={opt.key}
+                onClick={() => setGenStyle(opt.key)}
+                className={`px-3 py-1.5 rounded-full text-[11px] font-medium transition-all cursor-pointer ${
+                  genStyle === opt.key
+                    ? 'bg-white/10 text-white'
+                    : 'text-text-muted hover:text-text'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={handleGenerate}
+            className="flex items-center gap-2 px-4 py-2 rounded-full border border-accent/40 bg-accent/10 text-accent hover:bg-accent/20 transition-all cursor-pointer"
+          >
+            <Shuffle size={14} />
+            <span className="font-mono text-xs font-bold tracking-wider">GENERATE</span>
+          </button>
+
+          <div className="w-px h-5 bg-border-subtle" />
+
           <button
             onClick={() => setLoopEnabled(!loopEnabled)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all ${loopEnabled
-              ? "bg-white text-black border-white"
-              : "border-[#333] text-[#555] hover:text-white hover:border-[#555]"
+            className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all cursor-pointer ${loopEnabled
+              ? "bg-accent text-bg border-accent"
+              : "border-border text-text-muted hover:text-text hover:border-border"
               }`}
           >
             <RotateCcw size={14} />
@@ -350,17 +504,25 @@ export default function PracticeRoom() {
           </button>
 
           <button
-            onClick={() => { setSlots([null, null, null, null]); setIsPlaying(false); setActiveSlotIdx(0); setAudioProgress(0); }}
-            className="font-mono text-xs font-bold tracking-wider text-red-400 hover:text-red-300 transition-colors ml-2 px-4 py-2"
+            onClick={() => {
+              sequenceRunRef.current += 1;
+              sequenceRef.current?.stop(0.02);
+              sequenceRef.current = null;
+              setSlots([null, null, null, null]);
+              setIsPlaying(false);
+              setActiveSlotIdx(0);
+              setAudioProgress(0);
+            }}
+            className="font-mono text-xs font-bold tracking-wider text-red-400 hover:text-red-300 transition-colors px-4 py-2 cursor-pointer"
           >
-            CLEAR SLOTS
+            CLEAR
           </button>
 
           <button
             onClick={pitchDetection.toggle}
             className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all ${pitchDetection.isListening
               ? "bg-red-500/10 border-red-500/40 text-red-400 shadow-[0_0_15px_rgba(248,113,113,0.15)]"
-              : "border-[#333] text-[#555] hover:text-white hover:border-[#555]"
+              : "border-border text-text-muted hover:text-text hover:border-border"
               }`}
           >
             {pitchDetection.isListening ? <Activity size={18} className="animate-pulse" /> : <Mic size={18} />}
@@ -375,27 +537,29 @@ export default function PracticeRoom() {
       <div className="flex-1 grid grid-cols-1 xl:grid-cols-4 gap-6 min-h-0">
 
         {/* Left Column: Draggable Library */}
-        <div className="bg-[#1a1a1a] border border-[#222222] rounded-2xl p-6 flex flex-col min-h-0 col-span-1">
-          <h3 className="text-[11px] tracking-[2px] uppercase text-[#555] mb-4 flex items-center justify-between">
+        <div className="bg-elevated border border-border-subtle rounded-2xl p-6 flex flex-col min-h-0 col-span-1">
+          <h3 className="text-[11px] tracking-[2px] uppercase text-text-muted mb-4 flex items-center justify-between">
             Chord Library
             <GripHorizontal size={14} className="opacity-30" />
           </h3>
-          <p className="text-xs text-[#555] mb-4">Drag any chord below into a progression slot.</p>
+          <p className="text-xs text-text-muted mb-4">Drag any chord below into a progression slot.</p>
 
           <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-4">
             {ROOTS.map(root => (
-              <div key={root} className="bg-[#1e1e1e] p-3 rounded-lg border border-[#2a2a2a]">
-                <h4 className="font-bold text-white mb-2">{root}</h4>
+              <div key={root} className="bg-elevated p-3 rounded-lg border border-border">
+                <h4 className="font-bold text-text mb-2">{root}</h4>
                 <div className="flex flex-wrap gap-2">
                   {QUALITIES.map(quality => (
-                    <div
+                    <button
                       key={`${root}-${quality}`}
                       draggable
                       onDragStart={(e) => handleDragStart(e, root, quality)}
-                      className="px-2 py-1.5 bg-[#2a2a2a] border border-[#333] rounded text-xs font-medium text-[#888888] hover:border-white hover:text-white cursor-grab active:cursor-grabbing transition-colors whitespace-nowrap"
+                      onClick={() => addChordFromLibrary(root, quality)}
+                      className="px-2 py-1.5 bg-elevated border border-border rounded text-xs font-medium text-text-secondary hover:border-accent hover:text-text cursor-grab active:cursor-grabbing transition-colors whitespace-nowrap text-left"
+                      title="Click to add and preview. Drag to place manually."
                     >
-                      <span className="font-bold text-white">{root}</span> <span className="text-[#888888]">{quality}</span>
-                    </div>
+                      <span className="font-bold text-text">{root}</span> <span className="text-text-secondary">{quality}</span>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -407,34 +571,37 @@ export default function PracticeRoom() {
         <div className="xl:col-span-3 flex flex-col gap-6 min-h-0">
 
           {/* Progression Drop Zones */}
-          <div className="bg-[#1a1a1a] border border-[#222222] rounded-2xl p-6 flex-shrink-0">
-            <h3 className="text-[11px] tracking-[2px] uppercase text-[#555] mb-4">
+          <div className="bg-elevated border border-border-subtle rounded-2xl p-6 flex-shrink-0">
+            <h3 className="text-[11px] tracking-[2px] uppercase text-text-muted mb-4">
               Progression Slots
             </h3>
             <div className="flex items-center justify-center gap-4">
               {slots.map((slot, idx) => (
                 <div
                   key={idx}
-                  onDragOver={handleDragOver}
+                  onDragOver={(e) => handleDragOver(e, idx)}
+                  onDragLeave={() => setDropTargetIdx(current => current === idx ? null : current)}
                   onDrop={(e) => handleDrop(e, idx)}
                   onClick={() => {
                     if (slot && !isPlaying) {
                       setActiveSlotIdx(idx);
                       setAudioProgress(0);
-                      setIsPlaying(true);
+                      playFromSlot(idx);
                     }
                   }}
-                  className={`flex-1 h-32 rounded-xl flex flex-col items-center justify-center border-2 transition-all relative overflow-hidden group ${slot ? 'cursor-pointer' : ''} ${idx === activeSlotIdx && isPlaying
-                      ? "border-white bg-white/5 shadow-[0_0_30px_rgba(255,255,255,0.05)] scale-105 z-10"
+                  className={`flex-1 h-32 rounded-xl flex flex-col items-center justify-center border-2 transition-all relative overflow-hidden group ${slot ? 'cursor-pointer' : ''} ${dropTargetIdx === idx
+                      ? "border-accent bg-accent/10 scale-[1.03]"
+                      : idx === activeSlotIdx && isPlaying
+                      ? "border-accent bg-accent/5 shadow-glow scale-105 z-10"
                       : slot
-                        ? "border-[#333] bg-[#1e1e1e] hover:border-white/50"
-                        : "border-dashed border-[#2a2a2a] bg-[#111] opacity-60 hover:opacity-100 hover:border-[#555]"
+                        ? "border-border bg-elevated hover:border-accent/50"
+                        : "border-dashed border-border bg-surface opacity-60 hover:opacity-100 hover:border-text-muted"
                     }`}
                 >
                   {slot ? (
                     <>
-                      <span className="text-4xl font-bold mb-1 text-white">{slot.root}</span>
-                      <span className="font-mono text-sm text-[#888888]">{slot.quality}</span>
+                      <span className="text-4xl font-bold mb-1 text-text">{slot.root}</span>
+                      <span className="font-mono text-sm text-text-secondary">{slot.quality}</span>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -450,7 +617,7 @@ export default function PracticeRoom() {
                       </button>
                     </>
                   ) : (
-                    <div className="flex flex-col items-center text-[#555]">
+                    <div className="flex flex-col items-center text-text-muted">
                       <PlusCircle size={28} className="mb-2 opacity-50" />
                       <span className="font-mono text-xs uppercase tracking-widest leading-tight text-center">Drop<br />Chord Here</span>
                     </div>
@@ -461,25 +628,9 @@ export default function PracticeRoom() {
 
             {/* Playback Controls & Progress */}
             <div className="mt-8 flex items-center gap-6">
-              <div className="hidden">
-                {slots.map((_, i) => (
-                  <audio
-                    key={i}
-                    ref={(el) => seqAudioRefs.current[i] = el}
-                    onEnded={handleAudioEnded}
-                    onTimeUpdate={(e) => {
-                      if (i === activeSlotIdx && isPlaying) {
-                        setAudioProgress((e.currentTarget.currentTime / e.currentTarget.duration) * 100);
-                      }
-                    }}
-                    crossOrigin="anonymous"
-                  />
-                ))}
-              </div>
-
               <button
                 onClick={skipBack}
-                className="p-3 rounded-full bg-[#2a2a2a] border border-[#333] hover:bg-[#333] text-[#555] hover:text-white transition-colors disabled:opacity-30"
+                className="p-3 rounded-full bg-elevated border border-border hover:bg-card text-text-muted hover:text-text transition-colors disabled:opacity-30"
                 disabled={!slots.some(s => s !== null)}
                 aria-label="Previous chord"
               >
@@ -489,7 +640,7 @@ export default function PracticeRoom() {
               <button
                 onClick={togglePlay}
                 disabled={!slots.some(s => s !== null)}
-                className="w-16 h-16 rounded-full bg-white flex items-center justify-center text-black hover:bg-white/90 hover:scale-105 transition-all disabled:opacity-50 disabled:hover:scale-100"
+                className="w-16 h-16 rounded-full bg-accent flex items-center justify-center text-bg hover:brightness-110 hover:scale-105 transition-all disabled:opacity-50 disabled:hover:scale-100"
                 aria-label={isPlaying ? "Pause" : "Play"}
               >
                 {isPlaying ? <Pause size={32} /> : <Play size={32} className="ml-1" />}
@@ -497,7 +648,7 @@ export default function PracticeRoom() {
 
               <button
                 onClick={() => skipToNextValidSlot(activeSlotIdx)}
-                className="p-3 rounded-full bg-[#2a2a2a] border border-[#333] hover:bg-[#333] text-[#555] hover:text-white transition-colors disabled:opacity-30"
+                className="p-3 rounded-full bg-elevated border border-border hover:bg-card text-text-muted hover:text-text transition-colors disabled:opacity-30"
                 disabled={!slots.some(s => s !== null)}
                 aria-label="Next chord"
               >
@@ -505,19 +656,19 @@ export default function PracticeRoom() {
               </button>
 
               <div className="flex-1 mx-4">
-                <div className="h-2 bg-[#2a2a2a] rounded-full overflow-hidden relative">
+                <div className="h-2 bg-elevated rounded-full overflow-hidden relative">
                   <div
-                    className="absolute top-0 left-0 h-full bg-white transition-all duration-[20ms] ease-linear rounded-full"
+                    className="absolute top-0 left-0 h-full bg-accent transition-all duration-[20ms] ease-linear rounded-full"
                     style={{ width: `${audioProgress}%` }}
                   />
                 </div>
               </div>
 
               {/* Volume Control */}
-              <div className="flex items-center gap-3 text-[#555] px-4 py-2 bg-[#1e1e1e] border border-[#2a2a2a] rounded-full">
+              <div className="flex items-center gap-3 text-text-muted px-4 py-2 bg-elevated border border-border rounded-full">
                 <button
                   onClick={() => setIsMuted(!isMuted)}
-                  className="hover:text-white transition-colors"
+                  className="hover:text-text transition-colors"
                   aria-label={isMuted ? "Unmute" : "Mute"}
                 >
                   {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
@@ -531,7 +682,7 @@ export default function PracticeRoom() {
                     setVolume(Number(e.target.value));
                     setIsMuted(false);
                   }}
-                  className="w-24 h-1.5 accent-white cursor-pointer"
+                  className="w-24 h-1.5 accent-accent cursor-pointer"
                   aria-label="Volume"
                 />
               </div>
@@ -539,14 +690,14 @@ export default function PracticeRoom() {
           </div>
 
           {/* Fretboard Visualization */}
-          <div className="bg-[#1a1a1a] border border-[#222222] rounded-2xl p-6 flex-1 flex flex-col min-h-0">
+          <div className="bg-elevated border border-border-subtle rounded-2xl p-6 flex-1 flex flex-col min-h-0">
             {/* Header: chord badge + scale strip */}
             <div className="flex flex-col gap-3 mb-4">
               <div className="flex justify-between items-center">
-                <h3 className="text-[11px] tracking-[2px] uppercase text-[#555] flex items-center gap-2">
-                  <Activity size={14} className="text-white" /> Fretboard View
+                <h3 className="text-[11px] tracking-[2px] uppercase text-text-muted flex items-center gap-2">
+                  <Activity size={14} className="text-text" /> Fretboard View
                 </h3>
-                <span className={`px-4 py-2 rounded-xl font-bold text-lg ${currentSlot ? 'text-black bg-white' : 'text-[#555] bg-[#1e1e1e] border border-[#2a2a2a]'}`}>
+                <span className={`px-4 py-2 rounded-xl font-bold text-lg ${currentSlot ? 'text-bg bg-accent' : 'text-text-muted bg-elevated border border-border'}`}>
                   {currentSlot ? `${currentSlot.root}${currentSlot.quality}` : "No Chord Active"}
                 </span>
               </div>
@@ -554,15 +705,15 @@ export default function PracticeRoom() {
               {/* Scale Strip — always visible, one tap to switch */}
               {currentSlot && validScales.length > 0 && (
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-semibold text-[#555] uppercase tracking-wider flex-shrink-0">Scales</span>
+                  <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider flex-shrink-0">Scales</span>
                   <div className="flex gap-1.5 flex-wrap">
                     {validScales.map((scale, idx) => (
                       <button
                         key={scale}
                         onClick={() => setSelectedScaleOverride(scale)}
                         className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${activeScale === scale
-                          ? 'bg-white text-black'
-                          : 'bg-[#1e1e1e] text-[#555] border border-[#2a2a2a] hover:bg-[#2a2a2a] hover:text-white'
+                          ? 'bg-accent text-bg'
+                          : 'bg-elevated text-text-muted border border-border hover:bg-card hover:text-text'
                         }`}
                       >
                         <span className="opacity-50 mr-1">{idx + 1}</span>
@@ -570,17 +721,17 @@ export default function PracticeRoom() {
                       </button>
                     ))}
                   </div>
-                  <span className="text-[10px] text-[#333] flex-shrink-0 hidden lg:block">keys or 1-{validScales.length}</span>
+                  <span className="text-[10px] text-text-faint flex-shrink-0 hidden lg:block">keys or 1-{validScales.length}</span>
                 </div>
               )}
             </div>
 
             <Fretboard activeNotes={currentOverlay} showIntervals={true} />
 
-            <div className="mt-4 flex gap-6 text-xs text-[#888888] justify-center bg-[#1e1e1e] border border-[#2a2a2a] p-3 rounded-lg w-fit mx-auto">
-              <div className="flex items-center"><span className="inline-block w-3 h-3 rounded-full bg-white mr-2"></span>Root</div>
-              <div className="flex items-center"><span className="inline-block w-3 h-3 rounded-full bg-[#888888] mr-2"></span>Chord Tone</div>
-              <div className="flex items-center"><span className="inline-block w-3 h-3 rounded-full bg-[#555] mr-2 opacity-60"></span>Tension</div>
+            <div className="mt-4 flex gap-6 text-xs text-text-secondary justify-center bg-elevated border border-border p-3 rounded-lg w-fit mx-auto">
+              <div className="flex items-center"><span className="inline-block w-3 h-3 rounded-full bg-accent mr-2"></span>Root</div>
+              <div className="flex items-center"><span className="inline-block w-3 h-3 rounded-full bg-text-secondary mr-2"></span>Chord Tone</div>
+              <div className="flex items-center"><span className="inline-block w-3 h-3 rounded-full bg-text-muted mr-2 opacity-60"></span>Tension</div>
             </div>
           </div>
 

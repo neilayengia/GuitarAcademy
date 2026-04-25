@@ -5,7 +5,7 @@
  * Includes chord-scale theory for jazz improvisation.
  */
 
-import { pitchClass, noteNameFromPitchClass } from './notes';
+import { pitchClass, noteNameFromPitchClass, spellNote, intervalLabelToDegreeOffset } from './notes';
 import { applyInterval } from './intervals';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -315,14 +315,21 @@ export function getScaleType(name: string): ScaleType | undefined {
 
 /**
  * Build a scale: given root + scale name, return all notes.
+ * Uses correct enharmonic spelling — each scale degree gets its own letter name.
+ * e.g. buildScale('Db', 'major') → ['Db', 'Eb', 'F', 'Gb', 'Ab', 'Bb', 'C']
  */
 export function buildScale(root: string, scaleName: string, preferFlats = false): Scale {
     const scaleType = getScaleType(scaleName);
     if (!scaleType) throw new Error(`Unknown scale: ${scaleName}`);
 
-    const notes = scaleType.intervals.map(semitones =>
-        applyInterval(root, semitones, preferFlats)
-    );
+    const rootPC = pitchClass(root);
+
+    const notes = scaleType.intervals.map((semitones, idx) => {
+        const targetPC = ((rootPC + semitones) % 12 + 12) % 12;
+        const label = scaleType.degrees[idx];
+        const degreeOffset = intervalLabelToDegreeOffset(label);
+        return spellNote(root, degreeOffset, targetPC);
+    });
 
     return { root, type: scaleType, notes };
 }

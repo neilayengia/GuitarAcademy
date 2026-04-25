@@ -5,7 +5,7 @@
  * to extended altered chords used in jazz harmony.
  */
 
-import { pitchClass, noteNameFromPitchClass, semitoneDist, normalizeNoteName, SHARP_NOTES } from './notes';
+import { pitchClass, noteNameFromPitchClass, semitoneDist, normalizeNoteName, SHARP_NOTES, spellNote, intervalLabelToDegreeOffset, prefersFlats } from './notes';
 import { applyInterval } from './intervals';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -253,18 +253,24 @@ export function getChordType(symbol: string): ChordType | undefined {
 
 /**
  * Build a chord: given root + type symbol, return all note names.
- * e.g. buildChord('C', 'maj7') → { root: 'C', notes: ['C', 'E', 'G', 'B'], ... }
+ * Uses correct enharmonic spelling — each chord tone gets its own letter name.
+ * e.g. buildChord('Db', 'maj7') → { root: 'Db', notes: ['Db', 'F', 'Ab', 'C'], ... }
  */
 export function buildChord(root: string, typeSymbol: string, preferFlats = false): Chord {
     const chordType = getChordType(typeSymbol);
     if (!chordType) throw new Error(`Unknown chord type: ${typeSymbol}`);
 
-    const notes = chordType.intervals.map(semitones =>
-        applyInterval(root, semitones, preferFlats)
-    );
+    const rootPC = pitchClass(root);
+
+    const notes = chordType.intervals.map((semitones, idx) => {
+        const targetPC = ((rootPC + semitones) % 12 + 12) % 12;
+        const label = chordType.intervalLabels[idx];
+        const degreeOffset = intervalLabelToDegreeOffset(label);
+        return spellNote(root, degreeOffset, targetPC);
+    });
 
     return {
-        root: normalizeNoteName(root),
+        root,
         type: chordType,
         notes,
         symbol: `${root}${chordType.symbol === 'maj' ? '' : chordType.symbol}`,

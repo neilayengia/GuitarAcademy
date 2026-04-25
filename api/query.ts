@@ -2,7 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
 import { queryChunks } from '../src/server/knowledgeDb';
 
-const EMBEDDING_MODEL = 'gemini-embedding-001';
+const EMBEDDING_MODEL = 'text-embedding-004';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
@@ -43,8 +43,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(500).json({ error: 'Failed to generate query embedding' });
     }
 
-    // Search the local SQLite database
-    const results = queryChunks(queryEmbedding, topK);
+    // Search the Supabase pgvector database
+    const results = await queryChunks(queryEmbedding, topK);
 
     return res.status(200).json({ results });
   } catch (err: any) {

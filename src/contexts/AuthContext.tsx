@@ -19,6 +19,7 @@ interface AuthContextType {
   signUp: (email: string, password: string, displayName?: string) => Promise<{ error: string | null }>;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signInWithGoogle: () => Promise<{ error: string | null }>;
+  signInAsDevUser: () => void;
   signOut: () => Promise<void>;
 }
 
@@ -75,30 +76,57 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Handle session on mount + auth state changes
   useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setLoading(false);
+    }, 5000);
+
     // Check existing session
     supabase.auth.getSession().then(({ data: { session } }) => {
       handleSession(session);
+    }).catch((err) => {
+      console.error('Failed to read auth session:', err);
+      setUser(null);
+      setProfile(null);
+      useAppStore.setState({ _userId: null });
+      setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       handleSession(session);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      window.clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, []);
 
   async function handleSession(session: Session | null) {
-    if (session?.user) {
-      setUser(session.user);
-      const prof = await fetchProfile(session.user.id);
-      setProfile(prof);
-      await hydrateStoreFromRemote(session.user.id);
-    } else {
-      setUser(null);
-      setProfile(null);
-      useAppStore.setState({ _userId: null });
+    try {
+      if (session?.user) {
+        setUser(session.user);
+        useAppStore.setState({ _userId: session.user.id });
+
+        const prof = await fetchProfile(session.user.id);
+        setProfile(prof);
+        await hydrateStoreFromRemote(session.user.id);
+      } else {
+        setUser(null);
+        setProfile(null);
+        useAppStore.setState({ _userId: null });
+      }
+    } catch (err) {
+      console.error('Failed to hydrate auth session:', err);
+      if (session?.user) {
+        setUser(session.user);
+      } else {
+        setUser(null);
+        setProfile(null);
+        useAppStore.setState({ _userId: null });
+      }
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   const signUp = async (email: string, password: string, displayName?: string) => {
@@ -125,14 +153,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: error?.message ?? null };
   };
 
+  const signInAsDevUser = () => {
+    if (!import.meta.env.DEV) return;
+
+    const devUser = {
+      id: 'dev-local-user',
+      email: 'dev@rubato.local',
+      user_metadata: { display_name: 'Dev Player' },
+      app_metadata: {},
+      aud: 'authenticated',
+      created_at: new Date().toISOString(),
+    } as User;
+
+    setUser(devUser);
+    setProfile({
+      id: devUser.id,
+      email: devUser.email ?? 'dev@rubato.local',
+      display_name: 'Dev Player',
+      subscription_tier: 'pro',
+      subscription_status: 'active',
+    });
+    setLoading(false);
+    useAppStore.setState({ _userId: null });
+  };
+
   const signOut = async () => {
-    await supabase.auth.signOut();
+    if (user?.id !== 'dev-local-user') {
+      await supabase.auth.signOut();
+    }
     useAppStore.getState().resetProgress();
+    setUser(null);
+    setProfile(null);
     useAppStore.setState({ _userId: null });
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signUp, signIn, signInWithGoogle, signOut }}>
+    <AuthContext.Provider value={{ user, profile, loading, signUp, signIn, signInWithGoogle, signInAsDevUser, signOut }}>
       {children}
     </AuthContext.Provider>
   );

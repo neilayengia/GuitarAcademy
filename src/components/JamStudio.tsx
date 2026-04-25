@@ -12,7 +12,7 @@ import {
 import Fretboard from './Fretboard';
 import { getScalePositions, type FretPosition } from '../musicTheory/fretboardMapping';
 import { SHARP_NOTES } from '../musicTheory/notes';
-import { playClick } from '../utils/audioEngine';
+import { getAudioTime, playClick, preloadAudioEngine, unlockAudioEngine } from '../utils/audioEngine';
 import { getTipsForScale } from '../utils/practiceTips';
 
 // ── Scale options ───────────────────────────────────────────────────────────
@@ -178,23 +178,52 @@ function useMetronome() {
     const [beat, setBeat] = useState(0);
     const beatsPerBar = 4;
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const nextBeatTimeRef = useRef(0);
+    const beatRef = useRef(0);
+    const bpmRef = useRef(bpm);
+
+    useEffect(() => {
+        bpmRef.current = bpm;
+    }, [bpm]);
+
+    const scheduleNextBeat = useCallback(() => {
+        const nextBeat = (beatRef.current % beatsPerBar) + 1;
+        beatRef.current = nextBeat;
+        setBeat(nextBeat);
+        playClick(nextBeat === 1, nextBeatTimeRef.current);
+        nextBeatTimeRef.current += 60 / bpmRef.current;
+    }, []);
 
     const start = useCallback(() => {
-        setIsRunning(true); setBeat(0);
-        playClick(true); setBeat(1);
-        const ms = (60 / bpm) * 1000;
+        unlockAudioEngine();
+        preloadAudioEngine().catch(() => {});
+        if (intervalRef.current) clearInterval(intervalRef.current);
+        setIsRunning(true);
+        setBeat(0);
+        beatRef.current = 0;
+        nextBeatTimeRef.current = getAudioTime() + 0.04;
+
+        const scheduleAhead = 0.12;
+        const lookaheadMs = 25;
+        const tick = () => {
+            while (nextBeatTimeRef.current < getAudioTime() + scheduleAhead) {
+                scheduleNextBeat();
+            }
+        };
+
+        tick();
         intervalRef.current = setInterval(() => {
-            setBeat(prev => { const next = (prev % beatsPerBar) + 1; playClick(next === 1); return next; });
-        }, ms);
-    }, [bpm]);
+            tick();
+        }, lookaheadMs);
+    }, [scheduleNextBeat]);
 
     const stop = useCallback(() => {
         setIsRunning(false); setBeat(0);
         if (intervalRef.current) clearInterval(intervalRef.current);
+        intervalRef.current = null;
     }, []);
 
     useEffect(() => () => { if (intervalRef.current) clearInterval(intervalRef.current); }, []);
-    useEffect(() => { if (isRunning) { stop(); setTimeout(start, 50); } }, [bpm]);
 
     return { isRunning, bpm, setBpm, beat, beatsPerBar, start, stop };
 }
