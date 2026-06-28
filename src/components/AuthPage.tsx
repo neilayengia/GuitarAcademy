@@ -5,7 +5,7 @@ import { motion } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function AuthPage() {
-  const { user, loading: authLoading, signIn, signUp, signInWithGoogle } = useAuth();
+  const { user, loading: authLoading, signIn, signUp, signInWithGoogle, signInAsDevUser } = useAuth();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -276,6 +276,21 @@ export default function AuthPage() {
                   </button>
                 </div>
               </form>
+
+              {/* ── Dev bypass ── */}
+              {import.meta.env.DEV && (
+                <button
+                  type="button"
+                  onClick={signInAsDevUser}
+                  className="w-full mt-4 py-2.5 rounded-xl text-[11px] font-mono tracking-[1px] uppercase text-white/25 hover:text-white/50 transition-colors cursor-pointer"
+                  style={{
+                    background: 'rgba(255,255,255,0.02)',
+                    border: '1px dashed rgba(255,255,255,0.08)',
+                  }}
+                >
+                  Dev Mode — Skip Auth
+                </button>
+              )}
 
               {/* ── Toggle ── */}
               <p className="text-[12px] mt-7 text-center text-white/20">

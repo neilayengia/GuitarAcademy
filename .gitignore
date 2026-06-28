@@ -10,3 +10,4 @@ knowledge/**/*.pdf
 knowledge/**/*.txt
 !knowledge/.gitkeep
 knowledge.db
+.vercel
