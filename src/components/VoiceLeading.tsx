@@ -33,6 +33,22 @@ interface VLChord {
     label: string;
     notes: string[];
     midi: number[];
+    positions?: { string: number; midi: number }[];
+}
+
+// A "voice" on guitar lives on a string — pair voices between chords by string
+// when we have real voicings, falling back to sorted-pitch pairing otherwise.
+function voicePairs(prev: VLChord, chord: VLChord): [number, number][] {
+    if (prev.positions && chord.positions) {
+        const pairs: [number, number][] = [];
+        for (const pos of chord.positions) {
+            const from = prev.positions.find(p => p.string === pos.string);
+            if (from) pairs.push([from.midi, pos.midi]);
+        }
+        return pairs;
+    }
+    const voices = Math.min(chord.midi.length, prev.midi.length);
+    return Array.from({ length: voices }, (_, v) => [prev.midi[v], chord.midi[v]]);
 }
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -102,8 +118,6 @@ export default function VoiceLeading() {
         return PRESETS[presetIdx]?.key || '';
     }, [useCustom, presetIdx]);
 
-    const vlChords = useMemo(() => buildVLChords(chordSymbols), [chordSymbols]);
-
     const vlPath = useMemo<VoiceLeadingPath | null>(() => {
         try {
             const path = getVoiceLeadingPath(chordSymbols);
@@ -111,12 +125,31 @@ export default function VoiceLeading() {
         } catch { return null; }
     }, [chordSymbols]);
 
+    // Prefer the real voicing engine (same voicings as the fretboard panel) so
+    // the visualization shows genuine voice leading; fall back to close-position
+    // stacks only when the engine couldn't voice every chord in the progression.
+    const vlChords = useMemo<VLChord[]>(() => {
+        if (vlPath && vlPath.steps.length === chordSymbols.length) {
+            return vlPath.steps.map(s => {
+                const midi = [...s.positions.map(p => p.midi)].sort((a, b) => a - b);
+                return {
+                    label: s.chord,
+                    notes: midi.map(midiToNoteName),
+                    midi,
+                    positions: s.positions.map(p => ({ string: p.string, midi: p.midi })),
+                };
+            });
+        }
+        return buildVLChords(chordSymbols);
+    }, [vlPath, chordSymbols]);
+
     const guideTones = useMemo(() => {
         try { return getGuidetoneLine(chordSymbols); }
         catch { return []; }
     }, [chordSymbols]);
 
     const H = 260;
+    const LABEL_H = 40;
     const allMidi = vlChords.flatMap(c => c.midi);
     const minM = allMidi.length > 0 ? Math.min(...allMidi) - 2 : 58;
     const maxM = allMidi.length > 0 ? Math.max(...allMidi) + 2 : 74;
@@ -171,10 +204,9 @@ export default function VoiceLeading() {
         return vlChords.map((chord, i) => {
             if (i === 0) return null;
             const prev = vlChords[i - 1];
-            const voices = Math.min(chord.midi.length, prev.midi.length);
             let common = 0, step = 0, leap = 0, totalSemi = 0;
-            for (let v = 0; v < voices; v++) {
-                const d = Math.abs(chord.midi[v] - prev.midi[v]);
+            for (const [a, b] of voicePairs(prev, chord)) {
+                const d = Math.abs(b - a);
                 totalSemi += d;
                 if (d === 0) common++;
                 else if (d <= 2) step++;
@@ -273,22 +305,21 @@ export default function VoiceLeading() {
                             </div>
                         </div>
 
-                        {/* SVG Voice Paths */}
-                        <div className="relative" style={{ height: H + 50 }}>
-                            <svg className="absolute inset-0 w-full overflow-visible pointer-events-none" style={{ height: H + 50 }}>
+                        {/* SVG Voice Paths — same coordinate space as the note circles */}
+                        <div className="relative" style={{ height: LABEL_H + H }}>
+                            <svg className="absolute left-0 right-0 w-full overflow-visible pointer-events-none" style={{ top: LABEL_H, height: H }}>
                                 {vlChords.map((chord, ci) => {
                                     if (ci === 0) return null;
                                     const prev = vlChords[ci - 1];
-                                    const voices = Math.min(chord.midi.length, prev.midi.length);
                                     const cols = vlChords.length;
-                                    const px = ((ci - 1) / (cols - 1)) * 100;
-                                    const cx = (ci / (cols - 1)) * 100;
+                                    const px = ((ci - 0.5) / cols) * 100;
+                                    const cx = ((ci + 0.5) / cols) * 100;
 
-                                    return Array.from({ length: voices }).map((_, vi) => {
-                                        const y1 = midiToY(prev.midi[vi], minM, maxM, H) + 25;
-                                        const y2 = midiToY(chord.midi[vi], minM, maxM, H) + 25;
-                                        const isCommon = prev.midi[vi] === chord.midi[vi];
-                                        const isStep = Math.abs(prev.midi[vi] - chord.midi[vi]) <= 2;
+                                    return voicePairs(prev, chord).map(([fromMidi, toMidi], vi) => {
+                                        const y1 = midiToY(fromMidi, minM, maxM, H);
+                                        const y2 = midiToY(toMidi, minM, maxM, H);
+                                        const isCommon = fromMidi === toMidi;
+                                        const isStep = Math.abs(fromMidi - toMidi) <= 2;
                                         const isActive = active >= ci - 1 && active <= ci;
 
                                         return (
@@ -297,7 +328,7 @@ export default function VoiceLeading() {
                                                 stroke={isCommon ? '#d4a44a' : isStep ? '#5b9bd5' : '#4a4a4a'}
                                                 strokeWidth={isCommon ? 2.5 : isStep ? 1.5 : 1}
                                                 strokeDasharray={isCommon ? 'none' : isStep ? 'none' : '5 4'}
-                                                opacity={isActive ? 0.9 : 0.15}
+                                                opacity={isActive ? 0.9 : 0.35}
                                                 style={{ transition: 'opacity 0.3s' }}
                                             />
                                         );
@@ -313,15 +344,16 @@ export default function VoiceLeading() {
                                         <div key={ci}
                                             onClick={() => { setActive(ci); if (chord.midi.length > 0) playChord(chord.midi, 0.04, 2); }}
                                             className="text-center cursor-pointer transition-opacity duration-300"
-                                            style={{ flex: `0 0 ${100 / vlChords.length}%`, opacity: isAct ? 1 : 0.3 }}>
-                                            <p className={`font-bold mb-3 transition-all duration-300 ${isAct ? 'text-[17px] text-text' : 'text-sm text-text-secondary'}`}>
+                                            style={{ flex: `0 0 ${100 / vlChords.length}%`, opacity: isAct ? 1 : 0.6 }}>
+                                            <p className={`font-bold flex items-end justify-center transition-all duration-300 ${isAct ? 'text-[17px] text-text' : 'text-sm text-text-secondary'}`}
+                                                style={{ height: LABEL_H, paddingBottom: 8 }}>
                                                 {chord.label}
                                             </p>
                                             <div className="relative" style={{ height: H }}>
                                                 {chord.notes.map((note, ni) => {
                                                     const y = midiToY(chord.midi[ni], minM, maxM, H);
-                                                    const isCommon = (ci > 0 && ni < vlChords[ci - 1].midi.length && chord.midi[ni] === vlChords[ci - 1].midi[ni]) ||
-                                                        (ci < vlChords.length - 1 && ni < vlChords[ci + 1].midi.length && chord.midi[ni] === vlChords[ci + 1].midi[ni]);
+                                                    const isCommon = (ci > 0 && vlChords[ci - 1].midi.includes(chord.midi[ni])) ||
+                                                        (ci < vlChords.length - 1 && vlChords[ci + 1].midi.includes(chord.midi[ni]));
                                                     const gt = guideTones[ci];
                                                     const isGuideTone = gt && (note === gt.third.note || note === gt.seventh.note);
 

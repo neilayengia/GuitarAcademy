@@ -1,16 +1,26 @@
 import React, { useState, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Menu, X, ArrowUpRight } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import UserMenu from "./UserMenu";
 
-const navItems = [
-  { to: "/", label: "Home" },
-  { to: "/voicings", label: "Voicings" },
-  { to: "/fretboard", label: "Scales" },
-  { to: "/voice-leading", label: "Voice Leading" },
-  { to: "/practice", label: "Practice" },
-  { to: "/jam", label: "Jam Studio" },
-  { to: "/analysis", label: "Progress" },
+const navSections: { label?: string; items: { to: string; label: string }[] }[] = [
+  { items: [{ to: "/", label: "Home" }] },
+  {
+    label: "Theory",
+    items: [
+      { to: "/voicings", label: "Voicings" },
+      { to: "/fretboard", label: "Scales" },
+      { to: "/voice-leading", label: "Voice Leading" },
+    ],
+  },
+  {
+    label: "Play",
+    items: [
+      { to: "/practice", label: "Practice" },
+      { to: "/jam", label: "Jam Studio" },
+    ],
+  },
+  { items: [{ to: "/analysis", label: "Progress" }] },
 ];
 
 interface SidebarProps {
@@ -38,17 +48,22 @@ export default function Sidebar({ onOpenSettings }: SidebarProps) {
 
       {/* ── Navigation ── */}
       <nav className="sidebar-nav">
-        {navItems.map(item => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === "/"}
-            className={({ isActive }) =>
-              `sidebar-link ${isActive ? "sidebar-link--active" : ""}`
-            }
-          >
-            <span className="sidebar-link-label">{item.label}</span>
-          </NavLink>
+        {navSections.map((section, i) => (
+          <div key={i} className="sidebar-section">
+            {section.label && <p className="sidebar-section-label">{section.label}</p>}
+            {section.items.map(item => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === "/"}
+                className={({ isActive }) =>
+                  `sidebar-link ${isActive ? "sidebar-link--active" : ""}`
+                }
+              >
+                <span className="sidebar-link-label">{item.label}</span>
+              </NavLink>
+            ))}
+          </div>
         ))}
       </nav>
 

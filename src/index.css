@@ -113,22 +113,39 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 22px;
   padding: 0 12px;
 }
 
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sidebar-section-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+  padding: 0 12px 8px;
+}
+
 .sidebar-link {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 7px 12px;
   border-radius: var(--radius-sm);
   color: var(--color-text-muted);
   font-size: 13px;
   font-weight: 400;
   letter-spacing: -0.01em;
   cursor: pointer;
-  transition: color 0.15s ease, background 0.15s ease;
+  transition: color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   text-decoration: none;
   border: none;
   background: none;
@@ -138,29 +155,18 @@ body {
 
 .sidebar-link:hover {
   color: var(--color-text-secondary);
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(255, 255, 255, 0.025);
 }
 
 .sidebar-link--active {
   color: var(--color-text);
   font-weight: 500;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 2px 0 0 var(--color-accent);
 }
 
-.sidebar-link-label {
-  /* just text, no icon */
-}
-
-.sidebar-pro-chip {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-accent);
-  background: rgba(200, 169, 110, 0.1);
-  padding: 2px 6px;
-  border-radius: var(--radius-full);
-  line-height: 1;
+.sidebar-link--active:hover {
+  color: var(--color-text);
 }
 
 .sidebar-footer {
@@ -213,27 +219,6 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.user-menu-upgrade {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--color-accent);
-  background: rgba(200, 169, 110, 0.08);
-  border: 1px solid rgba(200, 169, 110, 0.15);
-  padding: 3px 10px;
-  border-radius: var(--radius-full);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  letter-spacing: 0;
-}
-
-.user-menu-upgrade:hover {
-  background: rgba(200, 169, 110, 0.14);
-  border-color: rgba(200, 169, 110, 0.25);
 }
 
 .user-menu-signout {
