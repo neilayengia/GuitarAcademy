@@ -13,13 +13,11 @@ import { preloadAudioEngine, unlockAudioEngine } from "./utils/audioEngine";
 const Dashboard = lazy(() => import("./components/Dashboard"));
 const FretboardExplorer = lazy(() => import("./components/FretboardExplorer"));
 const PracticeRoom = lazy(() => import("./components/PracticeRoom"));
-const AIInstructor = lazy(() => import("./components/AIInstructor"));
 const PerformanceAnalysis = lazy(() => import("./components/PerformanceAnalysis"));
 const ChordVoicings = lazy(() => import("./components/ChordVoicings"));
 const JamStudio = lazy(() => import("./components/JamStudio"));
 const VoiceLeading = lazy(() => import("./components/VoiceLeading"));
 const AuthPage = lazy(() => import("./components/AuthPage"));
-const PricingPage = lazy(() => import("./components/PricingPage"));
 const LessonView = lazy(() => import("./components/LessonView"));
 
 function ViewSkeleton() {
@@ -43,13 +41,11 @@ const ROUTE_TITLES: Record<string, string> = {
   "/": "Curriculum | Rubato",
   "/fretboard": "Scales & Modes | Rubato",
   "/practice": "Practice Room | Rubato",
-  "/instructor": "AI Instructor | Rubato",
   "/analysis": "Performance Analysis | Rubato",
   "/voicings": "Chord Voicings | Rubato",
   "/jam": "Jam Studio | Rubato",
   "/voice-leading": "Voice Leading | Rubato",
   "/auth": "Sign In | Rubato",
-  "/pricing": "Upgrade | Rubato",
   "/lesson": "Lesson | Rubato",
 };
 
@@ -115,12 +111,10 @@ function AnimatedRoutes() {
           <Suspense fallback={<ViewSkeleton />}>
             <Routes location={location}>
               <Route path="/" element={<Dashboard />} />
-              <Route path="/pricing" element={<PricingPage />} />
               <Route path="/fretboard" element={<FretboardExplorer />} />
               <Route path="/voice-leading" element={<VoiceLeading />} />
               <Route path="/practice" element={<PracticeRoom />} />
               <Route path="/jam" element={<JamStudio />} />
-              <Route path="/instructor" element={<AIInstructor />} />
               <Route path="/analysis" element={<PerformanceAnalysis />} />
               <Route path="/voicings" element={<ChordVoicings />} />
               <Route path="/lesson/:moduleId/:lessonIndex" element={<LessonView />} />

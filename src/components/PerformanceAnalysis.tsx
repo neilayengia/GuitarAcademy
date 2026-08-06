@@ -27,21 +27,16 @@ export default function PerformanceAnalysis() {
 
   const hours = totalPracticeMinutes / 60;
   const animHours = useAnimatedCounter(Math.round(hours * 10)) / 10;
-  const animVoicings = useAnimatedCounter(sessionsCompleted * 3); // approximate
+  const animSessions = useAnimatedCounter(sessionsCompleted);
 
-  // Generate chart data from recent sessions (or placeholder)
-  const chartData = recentSessions.length > 0
-    ? recentSessions.slice(0, 7).reverse().map(s => s.durationMinutes)
-    : [2, 3, 4, 3, 6, 8, 10, 9, 12, 11, 14, 12];
+  const chartData = recentSessions.slice(0, 7).reverse().map(s => s.durationMinutes);
 
   const maxVal = Math.max(...chartData, 1);
   const chartPoints = chartData.map((v, i) => {
-    const x = (i / (chartData.length - 1)) * 100;
+    const x = chartData.length > 1 ? (i / (chartData.length - 1)) * 100 : 50;
     const y = 100 - (v / maxVal) * 80 - 10;
     return `${x},${y}`;
   }).join(' ');
-
-  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -67,11 +62,11 @@ export default function PerformanceAnalysis() {
             <div className="flex gap-4">
               <div className="glass-card px-8 py-5 text-center">
                 <p className="text-3xl font-bold mb-1">{animHours.toFixed(1)}</p>
-                <p className="text-[10px] tracking-[2px] uppercase text-[#555]">Hrs This Week</p>
+                <p className="text-[10px] tracking-[2px] uppercase text-[#555]">Hours Practiced</p>
               </div>
               <div className="glass-card px-8 py-5 text-center">
-                <p className="text-3xl font-bold mb-1">{animVoicings}</p>
-                <p className="text-[10px] tracking-[2px] uppercase text-[#555]">Voicings Learned</p>
+                <p className="text-3xl font-bold mb-1">{animSessions}</p>
+                <p className="text-[10px] tracking-[2px] uppercase text-[#555]">Sessions</p>
               </div>
             </div>
           </div>
@@ -80,6 +75,7 @@ export default function PerformanceAnalysis() {
 
       {/* Chart */}
       <div className="px-10 pb-12">
+        {recentSessions.length > 0 && (
         <div className="bg-[#1a1a1a] rounded-2xl p-8 border border-[#222]">
           <svg viewBox="0 0 100 100" className="w-full h-64" preserveAspectRatio="none">
             {/* Grid lines */}
@@ -112,11 +108,11 @@ export default function PerformanceAnalysis() {
             </defs>
           </svg>
 
-          {/* X-axis labels */}
-          <div className="flex justify-between mt-4 text-[11px] text-[#555] tracking-wide">
-            {days.map(d => <span key={d}>{d}</span>)}
-          </div>
+          <p className="mt-4 text-[11px] text-[#555] tracking-wide text-center">
+            Minutes per session — last {chartData.length} session{chartData.length === 1 ? "" : "s"}
+          </p>
         </div>
+        )}
 
         {/* Recent sessions */}
         {recentSessions.length > 0 && (

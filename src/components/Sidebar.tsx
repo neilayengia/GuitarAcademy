@@ -11,7 +11,6 @@ const navItems = [
   { to: "/practice", label: "Practice" },
   { to: "/jam", label: "Jam Studio" },
   { to: "/analysis", label: "Progress" },
-  { to: "/instructor", label: "AI Instructor", pro: true },
 ];
 
 interface SidebarProps {
@@ -39,24 +38,18 @@ export default function Sidebar({ onOpenSettings }: SidebarProps) {
 
       {/* ── Navigation ── */}
       <nav className="sidebar-nav">
-        {navItems.map(item => {
-          const isPro = (item as any).pro;
-          return (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === "/"}
-              className={({ isActive }) =>
-                `sidebar-link ${isActive ? "sidebar-link--active" : ""}`
-              }
-            >
-              <span className="sidebar-link-label">{item.label}</span>
-              {isPro && (
-                <span className="sidebar-pro-chip">Pro</span>
-              )}
-            </NavLink>
-          );
-        })}
+        {navItems.map(item => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.to === "/"}
+            className={({ isActive }) =>
+              `sidebar-link ${isActive ? "sidebar-link--active" : ""}`
+            }
+          >
+            <span className="sidebar-link-label">{item.label}</span>
+          </NavLink>
+        ))}
       </nav>
 
       {/* ── Footer ── */}

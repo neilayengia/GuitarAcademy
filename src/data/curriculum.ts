@@ -572,7 +572,7 @@ export const MODULE_1: Module = {
 export const MODULE_2: Module = {
     id: 2,
     title: 'Advanced Reharmonization',
-    subtitle: 'Module 2 (Virtuoso Pro)',
+    subtitle: 'Module 2',
     description: 'Transform basic chord progressions using tritone substitutions, secondary dominants, and diminished passing chords.',
     lessons: [
         {

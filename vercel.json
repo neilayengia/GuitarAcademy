@@ -1,9 +1,4 @@
 {
-  "functions": {
-    "api/**/*.ts": {
-      "includeFiles": "knowledge.db"
-    }
-  },
   "rewrites": [
     {
       "source": "/api/(.*)",

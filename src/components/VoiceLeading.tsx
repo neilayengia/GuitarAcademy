@@ -7,9 +7,7 @@
 
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Square, RotateCcw, ChevronRight, Repeat, Lightbulb, Lock } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
+import { Play, Square, RotateCcw, ChevronRight, Repeat, Lightbulb } from 'lucide-react';
 import { playChord } from '../utils/audioEngine';
 import Fretboard from './Fretboard';
 import {
@@ -91,9 +89,6 @@ export default function VoiceLeading() {
     const [tempo, setTempo] = useState(80);
     const [showSuggestions, setShowSuggestions] = useState(false);
     const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-
-    const { profile } = useAuth();
-    const isPro = profile?.subscription_tier === 'pro';
 
     const chordSymbols = useMemo(() => {
         if (useCustom && customInput.trim()) {
@@ -230,13 +225,6 @@ export default function VoiceLeading() {
 
                 {/* ── Custom input ── */}
                 <div className="relative mb-8">
-                    {!isPro && (
-                        <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-bg/80 backdrop-blur-sm border border-border-subtle">
-                            <Link to="/pricing" className="text-xs font-semibold text-accent flex items-center gap-1.5 hover:text-accent-bright transition-colors">
-                                <Lock size={12} /> Upgrade to Pro for Custom Progressions <ChevronRight size={14} />
-                            </Link>
-                        </div>
-                    )}
                     <div className="flex items-center gap-2">
                         <input
                             type="text"
@@ -244,13 +232,10 @@ export default function VoiceLeading() {
                             onChange={e => setCustomInput(e.target.value)}
                             onKeyDown={e => e.key === 'Enter' && submitCustom()}
                             placeholder="Custom: Dm7 G7 Cmaj7 Am7..."
-                            disabled={!isPro}
                             className="flex-1 bg-surface border border-border rounded-xl px-4 py-2.5 text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-accent/50 transition-colors"
                         />
-                        <button onClick={submitCustom} disabled={!isPro}
-                            className={`px-5 py-2.5 rounded-xl text-[13px] font-semibold transition-all ${
-                                isPro ? 'bg-accent text-bg hover:brightness-110' : 'bg-elevated text-text-muted cursor-not-allowed'
-                            }`}>
+                        <button onClick={submitCustom}
+                            className="px-5 py-2.5 rounded-xl text-[13px] font-semibold transition-all bg-accent text-bg hover:brightness-110">
                             Analyze
                         </button>
                     </div>
